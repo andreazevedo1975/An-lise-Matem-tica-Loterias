@@ -1,5 +1,34 @@
 import * as XLSX from 'xlsx';
-import type { LotteryConfig, AnalysisResult, Frequency, GameSuggestions, DrawData, RepeatedDraw, PairFrequency, EvenOddDistribution } from '../types';
+import type { LotteryConfig, AnalysisResult, Frequency, GameSuggestions, DrawData, RepeatedDraw, PairFrequency, EvenOddDistribution, NumberIntervalStats } from '../types';
+
+/**
+ * Parses a date string (e.g., dd/mm/yyyy) into a Date object.
+ * @param dateStr The date string to parse.
+ * @returns A Date object or null if parsing fails.
+ */
+const parseDate = (dateStr: string | number): Date | null => {
+    if (!dateStr) return null;
+    const str = String(dateStr);
+    const parts = str.match(/(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})/);
+    if (!parts) return null;
+    
+    // parts[1] = day, parts[2] = month, parts[3] = year
+    const day = parseInt(parts[1], 10);
+    const month = parseInt(parts[2], 10) - 1; // Month is 0-indexed in JS Date
+    let year = parseInt(parts[3], 10);
+
+    if (year < 100) {
+        year += (year > 50 ? 1900 : 2000); // Simple heuristic for 2-digit years
+    }
+
+    const date = new Date(year, month, day);
+    // Basic validation to catch invalid dates like 31/02/2023
+    if (date.getFullYear() === year && date.getMonth() === month && date.getDate() === day) {
+        return date;
+    }
+    return null;
+};
+
 
 /**
  * Parses raw file data (from CSV or XLSX) into a common format (array of arrays).
@@ -21,6 +50,10 @@ const readFileData = async (file: File): Promise<(string | number)[][]> => {
             return row.split(',').map(cell => {
                 const trimmedCell = cell.trim().replace(/"/g, '');
                 const num = Number(trimmedCell);
+                // Keep date-like strings as strings for now
+                if (trimmedCell.includes('/') || trimmedCell.includes('-')) {
+                    return trimmedCell;
+                }
                 return isNaN(num) || trimmedCell === '' ? trimmedCell : num;
             });
         });
@@ -82,113 +115,21 @@ export const regenerateSuggestions = (frequencies: Frequency[], config: LotteryC
 }
 
 /**
- * Analyzes lottery data from a user-provided file.
- * @param file The CSV or XLSX file containing lottery results.
- * @param config The configuration for the specific lottery being analyzed.
- * @returns A promise that resolves to an AnalysisResult object.
+ * Processes a given array of draws to calculate all statistical metrics.
+ * @param allDraws Array of DrawData objects to be processed.
+ * @param config The configuration for the current lottery.
+ * @returns An object containing all calculated analysis data.
  */
-export const analyzeLotteryData = async (file: File, config: LotteryConfig): Promise<AnalysisResult> => {
-    
-    const rawData = await readFileData(file);
-
-    if (rawData.length === 0) {
-        throw new Error('Arquivo vazio ou com formato inválido.');
-    }
-
-    // --- NEW ROBUST HEADER/DATA DETECTION ---
-    let headerRowIndex = -1;
-    let contestIndex = -1;
-    let drawIndices: number[] | null = null; // Use null to indicate "scan the whole row" mode
-
-    const drawColumnRegex = /(bola|dezena|d)\s*_?\d+/i;
-
-    // Strategy 1: Find a perfect header with "Concurso" and "Bola/Dezena" columns.
-    for (let i = 0; i < Math.min(rawData.length, 10); i++) {
-        const row = rawData[i].map(cell => String(cell).toLowerCase());
-        const potentialContestIndex = row.findIndex(h => h.includes('concurso'));
-        const potentialDrawIndices = row
-            .map((h, idx) => drawColumnRegex.test(h) ? idx : -1)
-            .filter(idx => idx !== -1);
-        
-        if (potentialContestIndex !== -1 && potentialDrawIndices.length >= config.drawSize) {
-            headerRowIndex = i;
-            contestIndex = potentialContestIndex;
-            drawIndices = potentialDrawIndices.slice(0, config.drawSize); // Use specific columns
-            break;
-        }
-    }
-
-    // Strategy 2: If perfect header fails, find just the "Concurso" column and scan rows for numbers.
-    if (headerRowIndex === -1) {
-        for (let i = 0; i < Math.min(rawData.length, 10); i++) {
-            const row = rawData[i].map(cell => String(cell).toLowerCase());
-            const potentialContestIndex = row.findIndex(h => h.includes('concurso'));
-            if (potentialContestIndex !== -1) {
-                // Check if the rows *below* this potential header contain valid-looking data
-                const nextRow = rawData[i + 1];
-                if (nextRow) {
-                     const numbersInNextRow = nextRow
-                        .map(cell => Number(cell))
-                        .filter(n => !isNaN(n) && n >= 1 && n <= config.totalNumbers);
-                    
-                    // If the next row looks like a lottery draw, we'll assume this is our header row
-                    if (numbersInNextRow.length >= config.drawSize) {
-                        headerRowIndex = i;
-                        contestIndex = potentialContestIndex;
-                        drawIndices = null; // Set to null to signal "scan the whole row"
-                        break;
-                    }
-                }
-            }
-        }
-    }
-    
-    if (headerRowIndex === -1) {
-        throw new Error('Não foi possível encontrar o cabeçalho. Verifique se o arquivo contém uma coluna "Concurso" e os números dos sorteios.');
-    }
-
-    const dataRows = rawData.slice(headerRowIndex + 1);
-
-    const allDraws: DrawData[] = dataRows
-        .map(row => {
-            const contest = row[contestIndex];
-            let draw: number[];
-
-            if (drawIndices) {
-                // --- Strategy 1 was successful: Use specific columns ---
-                draw = Array.from(new Set(
-                    drawIndices
-                        .map(index => Number(row[index]))
-                        .filter(n => !isNaN(n) && n >= 1 && n <= config.totalNumbers)
-                )).sort((a, b) => a - b);
-            } else {
-                // --- Strategy 2 was successful: Scan the whole row for numbers ---
-                draw = Array.from(new Set(
-                    row
-                        .map(cell => Number(cell))
-                        .filter(n => !isNaN(n) && n >= 1 && n <= config.totalNumbers)
-                )).sort((a, b) => a - b);
-            }
-
-            return { contest, draw };
-        })
-        .filter((d): d is DrawData => 
-            // This validation is key: only keep rows that, after all cleaning, match the lottery rules.
-            d.draw.length === config.drawSize && d.contest !== '' && d.contest !== undefined
-        );
-
-
-    if (allDraws.length === 0) {
-        throw new Error(`Nenhum sorteio válido encontrado. Verifique se o arquivo contém linhas com exatamente ${config.drawSize} números válidos entre 1 e ${config.totalNumbers}.`);
-    }
-
+export const processDraws = (allDraws: DrawData[], config: LotteryConfig): Omit<AnalysisResult, 'fileName' | 'allDraws'> => {
     const frequencyMap = new Map<number, number>();
     const drawsByNumber = new Map<number, (string | number)[]>();
     const drawStrings = new Map<string, (string | number)[]>();
     const pairFrequencyMap = new Map<string, number>();
     const evenOddDistributionMap = new Map<string, number>();
+    const lastSeen = new Map<number, number>(); // contest index
+    const intervals = new Map<number, number[]>();
 
-    allDraws.forEach(({ contest, draw }) => {
+    allDraws.forEach(({ contest, draw }, index) => {
         const drawKey = draw.join(',');
         if (!drawStrings.has(drawKey)) {
             drawStrings.set(drawKey, []);
@@ -201,6 +142,16 @@ export const analyzeLotteryData = async (file: File, config: LotteryConfig): Pro
                 drawsByNumber.set(num, []);
             }
             drawsByNumber.get(num)!.push(contest);
+
+            if (lastSeen.has(num)) {
+                const interval = index - lastSeen.get(num)!;
+                if (!intervals.has(num)) {
+                    intervals.set(num, []);
+                }
+                intervals.get(num)!.push(interval);
+            }
+            lastSeen.set(num, index);
+
         });
 
         // Pair analysis
@@ -218,6 +169,22 @@ export const analyzeLotteryData = async (file: File, config: LotteryConfig): Pro
         const evenOddKey = `${evens} Pares / ${odds} Ímpares`;
         evenOddDistributionMap.set(evenOddKey, (evenOddDistributionMap.get(evenOddKey) || 0) + 1);
     });
+
+    const intervalStats: NumberIntervalStats[] = [];
+    for (let i = 1; i <= config.totalNumbers; i++) {
+        const numIntervals = intervals.get(i) || [];
+        const avgInterval = numIntervals.length > 0 ? numIntervals.reduce((a,b) => a+b, 0) / numIntervals.length : 0;
+        const maxInterval = numIntervals.length > 0 ? Math.max(...numIntervals) : 0;
+        const lastSeenIndex = lastSeen.get(i);
+        const delay = lastSeenIndex !== undefined ? allDraws.length - 1 - lastSeenIndex : allDraws.length;
+        
+        intervalStats.push({
+            number: i,
+            avgInterval: parseFloat(avgInterval.toFixed(2)),
+            maxDelay: maxInterval,
+            currentDelay: delay,
+        });
+    }
 
     for (let i = 1; i <= config.totalNumbers; i++) {
         if (!frequencyMap.has(i)) frequencyMap.set(i, 0);
@@ -249,10 +216,9 @@ export const analyzeLotteryData = async (file: File, config: LotteryConfig): Pro
 
     const suggestions = regenerateSuggestions(frequencies, config);
     
-    const lastDraws = allDraws.slice(-10).reverse();
+    const lastDraws = allDraws.slice(0, 10);
 
-    return {
-        fileName: file.name,
+     return {
         totalDraws: allDraws.length,
         frequencies,
         repeatedDraws,
@@ -261,5 +227,125 @@ export const analyzeLotteryData = async (file: File, config: LotteryConfig): Pro
         drawsByNumber,
         topPairs,
         evenOddDistribution,
+        intervalStats,
+    };
+}
+
+
+/**
+ * Analyzes lottery data from a user-provided file.
+ * @param file The CSV or XLSX file containing lottery results.
+ * @param config The configuration for the specific lottery being analyzed.
+ * @returns A promise that resolves to an AnalysisResult object.
+ */
+export const analyzeLotteryData = async (file: File, config: LotteryConfig): Promise<AnalysisResult> => {
+    
+    const rawData = await readFileData(file);
+
+    if (rawData.length === 0) {
+        throw new Error('Arquivo vazio ou com formato inválido.');
+    }
+
+    // --- NEW ROBUST HEADER/DATA DETECTION ---
+    let headerRowIndex = -1;
+    let contestIndex = -1;
+    let dateIndex = -1;
+    let drawIndices: number[] | null = null; // Use null to indicate "scan the whole row" mode
+
+    const drawColumnRegex = /(bola|dezena|d)\s*_?\d+/i;
+    const contestColumnRegex = /concurso/i;
+    const dateColumnRegex = /data/i; // "data" is Portuguese for date
+
+    // Strategy 1: Find a perfect header with "Concurso", "Data" and "Bola/Dezena" columns.
+    for (let i = 0; i < Math.min(rawData.length, 10); i++) {
+        const row = rawData[i].map(cell => String(cell).toLowerCase());
+        const potentialContestIndex = row.findIndex(h => contestColumnRegex.test(h));
+        const potentialDateIndex = row.findIndex(h => dateColumnRegex.test(h));
+        const potentialDrawIndices = row
+            .map((h, idx) => drawColumnRegex.test(h) ? idx : -1)
+            .filter(idx => idx !== -1);
+        
+        if (potentialContestIndex !== -1 && potentialDateIndex !==-1 && potentialDrawIndices.length >= config.drawSize) {
+            headerRowIndex = i;
+            contestIndex = potentialContestIndex;
+            dateIndex = potentialDateIndex;
+            drawIndices = potentialDrawIndices.slice(0, config.drawSize); // Use specific columns
+            break;
+        }
+    }
+
+    // Strategy 2: If perfect header fails, find just "Concurso" and "Data" columns and scan rows for numbers.
+    if (headerRowIndex === -1) {
+        for (let i = 0; i < Math.min(rawData.length, 10); i++) {
+            const row = rawData[i].map(cell => String(cell).toLowerCase());
+            const potentialContestIndex = row.findIndex(h => contestColumnRegex.test(h));
+            const potentialDateIndex = row.findIndex(h => dateColumnRegex.test(h));
+
+            if (potentialContestIndex !== -1 && potentialDateIndex !== -1) {
+                const nextRow = rawData[i + 1];
+                if (nextRow) {
+                     const numbersInNextRow = nextRow
+                        .map(cell => Number(cell))
+                        .filter(n => !isNaN(n) && n >= 1 && n <= config.totalNumbers);
+                    
+                    if (numbersInNextRow.length >= config.drawSize) {
+                        headerRowIndex = i;
+                        contestIndex = potentialContestIndex;
+                        dateIndex = potentialDateIndex;
+                        drawIndices = null; // Set to null to signal "scan the whole row"
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    
+    if (headerRowIndex === -1 || dateIndex === -1) {
+        throw new Error('Não foi possível encontrar o cabeçalho. Verifique se o arquivo contém as colunas "Concurso", "Data" e os números dos sorteios.');
+    }
+
+    const dataRows = rawData.slice(headerRowIndex + 1);
+
+    const allDraws: DrawData[] = dataRows
+        .map(row => {
+            const contest = row[contestIndex];
+            const date = parseDate(row[dateIndex]);
+            let draw: number[];
+
+            if (drawIndices) {
+                draw = Array.from(new Set(
+                    drawIndices
+                        .map(index => Number(row[index]))
+                        .filter(n => !isNaN(n) && n >= 1 && n <= config.totalNumbers)
+                )).sort((a, b) => a - b);
+            } else {
+                draw = Array.from(new Set(
+                    row
+                        .map(cell => Number(cell))
+                        .filter(n => !isNaN(n) && n >= 1 && n <= config.totalNumbers)
+                )).sort((a, b) => a - b);
+            }
+
+            return { contest, draw, date };
+        })
+        .filter((d): d is DrawData => 
+            d.draw.length === config.drawSize && 
+            d.contest !== '' && d.contest !== undefined &&
+            d.date instanceof Date
+        );
+
+    if (allDraws.length === 0) {
+        throw new Error(`Nenhum sorteio válido encontrado. Verifique se o arquivo contém linhas com data válida e ${config.drawSize} números válidos entre 1 e ${config.totalNumbers}.`);
+    }
+
+    // Ensure draws are sorted newest to oldest for consistent interval analysis
+    allDraws.sort((a, b) => b.date.getTime() - a.date.getTime());
+
+    const processedData = processDraws(allDraws, config);
+    
+    return {
+        fileName: file.name,
+        allDraws,
+        ...processedData,
     };
 };

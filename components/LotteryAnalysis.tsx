@@ -1,62 +1,71 @@
-// Fix: Recreated the content for the LotteryAnalysis component.
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { GoogleGenAI } from '@google/genai';
-import { analyzeLotteryData, regenerateSuggestions } from '../services/analysisService';
-import type { LotteryConfig, AnalysisResult, GameSuggestions, SuggestionType, Frequency } from '../types';
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell
+} from 'recharts';
+import { analyzeLotteryData, regenerateSuggestions, processDraws } from '../services/analysisService';
+import type { LotteryConfig, AnalysisResult, GameSuggestions, SuggestionType, Frequency, NumberIntervalStats } from '../types';
 import NumberBall from './NumberBall';
-
-// A placeholder for a bar chart
-const FrequencyChart = ({ data, color, totalDraws }: { data: Frequency[], color: string, totalDraws: number }) => {
-  const maxCount = Math.max(...data.map(d => d.count), 0);
-
-  return (
-    <div className="grid grid-cols-5 sm:grid-cols-10 gap-2">
-      {data.sort((a, b) => a.number - b.number).map(({ number, count }) => (
-        <div key={number} className="group relative flex flex-col items-center">
-          <div className="w-full h-32 bg-slate-200 dark:bg-slate-700 rounded-md flex flex-col-reverse">
-            <div
-              className="w-full rounded-md"
-              style={{
-                height: `${maxCount > 0 ? (count / maxCount) * 100 : 0}%`,
-                backgroundColor: color,
-              }}
-            ></div>
-          </div>
-          <span className="text-xs font-semibold mt-1">{String(number).padStart(2, '0')}</span>
-           <div className="absolute bottom-full mb-2 w-max p-2 text-xs text-white bg-slate-900 rounded-md opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none">
-            Sorteado {count} vezes ({totalDraws > 0 ? ((count/totalDraws)*100).toFixed(2) : 0}%)
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-};
 
 interface LotteryAnalysisProps {
   config: LotteryConfig;
   isDarkMode: boolean;
 }
 
-const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config }) => {
+type SortKey = keyof NumberIntervalStats;
+
+// --- Helper Icons ---
+const HotIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-red-500" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M12.395 2.553a1 1 0 00-1.45-.385c-.345.23-.614.558-.822.934l.643-.643a1 1 0 00-1.414-1.414l-.644.643c-.276-.208-.59-.385-.934-.553a1 1 0 00-1.21.385l-.643.643a1 1 0 00-1.414 1.414l.643.643c-.168.344-.325.688-.478 1.043a1 1 0 00.385 1.21l.643.643a1 1 0 001.414-1.414l-.643-.643c.208-.276.425-.53.688-.748l-.643.643a1 1 0 001.414 1.414l.643-.643c.345.168.688.325 1.043.478a1 1 0 001.21-.385l.643-.643a1 1 0 00-1.414-1.414l-.643.643c.276-.208.53-.425.748-.688l.643.643a1 1 0 001.414-1.414l-.643-.643c.224-.345.45-.69.658-1.043a1 1 0 00-.385-1.21z" clipRule="evenodd" /></svg>;
+const ColdIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-blue-500" viewBox="0 0 20 20" fill="currentColor"><path d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" transform="rotate(45 10 10)" /></svg>;
+const CopyIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" /><path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2H6zM8 7a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" /></svg>;
+const CheckIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>;
+
+const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode }) => {
+  const [originalResult, setOriginalResult] = useState<AnalysisResult | null>(null);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<GameSuggestions | null>(null);
+  
+  const [selectedSuggestion, setSelectedSuggestion] = useState<number[] | null>(null);
+  const [selectedSuggestionType, setSelectedSuggestionType] = useState<SuggestionType | null>(null);
+  const [isCopied, setIsCopied] = useState(false);
+
+  const [selectedNumber, setSelectedNumber] = useState<{ number: number; contests: (string | number)[] } | null>(null);
+  
+  const [isLastDrawsVisible, setIsLastDrawsVisible] = useState(false);
+
+  const [selectedHot, setSelectedHot] = useState<number[]>([]);
+  const [selectedCold, setSelectedCold] = useState<number[]>([]);
+
+  const [sortConfig, setSortConfig] = useState<{ key: SortKey; direction: 'asc' | 'desc' }>({ key: 'number', direction: 'asc' });
+
   const [geminiAnalysis, setGeminiAnalysis] = useState<string | null>(null);
   const [isGeminiLoading, setIsGeminiLoading] = useState(false);
 
-  const [activeSuggestionTab, setActiveSuggestionTab] = useState<SuggestionType>('hot');
-  const [suggestions, setSuggestions] = useState<GameSuggestions | null>(null);
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     // Reset state when config changes
+    setOriginalResult(null);
     setAnalysisResult(null);
     setError(null);
-    setGeminiAnalysis(null);
     setIsLoading(false);
-    setIsGeminiLoading(false);
     setSuggestions(null);
+    setSelectedSuggestion(null);
+    setSelectedSuggestionType(null);
+    setSelectedNumber(null);
+    setIsLastDrawsVisible(false);
+    setSelectedHot([]);
+    setSelectedCold([]);
+    setSortConfig({ key: 'number', direction: 'asc' });
+    setGeminiAnalysis(null);
+    setIsGeminiLoading(false);
+    setStartDate('');
+    setEndDate('');
   }, [config]);
 
   const handleFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -66,17 +75,25 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config }) => {
     setIsLoading(true);
     setError(null);
     setAnalysisResult(null);
-    setGeminiAnalysis(null);
     
     try {
       const result = await analyzeLotteryData(file, config);
+      setOriginalResult(result);
       setAnalysisResult(result);
       setSuggestions(result.suggestions);
+
+      if (result.allDraws.length > 0) {
+        // Since data is sorted newest to oldest
+        const lastDate = result.allDraws[0].date;
+        const firstDate = result.allDraws[result.allDraws.length - 1].date;
+        setStartDate(firstDate.toISOString().split('T')[0]);
+        setEndDate(lastDate.toISOString().split('T')[0]);
+      }
+
     } catch (e: any) {
       setError(e.message || 'Ocorreu um erro ao analisar o arquivo.');
     } finally {
       setIsLoading(false);
-      // Reset file input value to allow re-uploading the same file
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
@@ -87,36 +104,193 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config }) => {
     fileInputRef.current?.click();
   };
 
+  const handleFilterApply = () => {
+      if (!originalResult || !startDate || !endDate) return;
+
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0); // Start of the day
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999); // End of the day
+
+      const filteredDraws = originalResult.allDraws.filter(draw => {
+          return draw.date >= start && draw.date <= end;
+      });
+
+      if (filteredDraws.length === 0) {
+          setError("Nenhum sorteio encontrado no período selecionado.");
+          setAnalysisResult({ ...originalResult, totalDraws: 0, frequencies: [], lastDraws: [] }); // Clear view but keep context
+          return;
+      }
+
+      setError(null);
+      const newProcessedData = processDraws(filteredDraws, config);
+      const newResultState: AnalysisResult = {
+          fileName: originalResult.fileName,
+          allDraws: originalResult.allDraws, // Keep the full list for re-filtering
+          ...newProcessedData,
+      };
+      setAnalysisResult(newResultState);
+      setSuggestions(newResultState.suggestions);
+  };
+
+  const handleFilterClear = () => {
+      if (!originalResult) return;
+      setAnalysisResult(originalResult);
+      setSuggestions(originalResult.suggestions);
+      setError(null);
+
+      // Reset date inputs to original full range
+      if (originalResult.allDraws.length > 0) {
+        const lastDate = originalResult.allDraws[0].date;
+        const firstDate = originalResult.allDraws[originalResult.allDraws.length - 1].date;
+        setStartDate(firstDate.toISOString().split('T')[0]);
+        setEndDate(lastDate.toISOString().split('T')[0]);
+      }
+  };
+
   const handleRegenerateSuggestions = () => {
     if (!analysisResult) return;
     const newSuggestions = regenerateSuggestions(analysisResult.frequencies, config);
     setSuggestions(newSuggestions);
+    setSelectedSuggestion(null);
+    setSelectedSuggestionType(null);
+  };
+
+  const handleSelectSuggestion = (type: SuggestionType) => {
+    if (!suggestions) return;
+    if (type === 'hot' || type === 'cold' || type === 'mixed') {
+      setSelectedSuggestion(suggestions[type]);
+    }
+    setSelectedSuggestionType(type);
+    setIsCopied(false);
+  };
+
+  const handleCopy = () => {
+    if (!selectedSuggestion) return;
+    navigator.clipboard.writeText(selectedSuggestion.join(', '));
+    setIsCopied(true);
+    setTimeout(() => setIsCopied(false), 2000);
   };
   
+  const handleChartClick = (data: any) => {
+    if (data && data.activePayload && data.activePayload[0] && analysisResult) {
+      const number = data.activePayload[0].payload.number;
+      const contests = analysisResult.drawsByNumber.get(number) || [];
+      setSelectedNumber({ number, contests });
+    }
+  };
+
+  const handleNumberClick = (number: number) => {
+     if (analysisResult) {
+      const contests = analysisResult.drawsByNumber.get(number) || [];
+      setSelectedNumber({ number, contests });
+    }
+  }
+
+  const handleCustomNumberSelect = (number: number, type: 'hot' | 'cold') => {
+    if (type === 'hot') {
+      setSelectedHot(prev => {
+        if (prev.includes(number)) return prev.filter(n => n !== number);
+        return prev.length < 2 ? [...prev, number] : prev;
+      });
+    } else {
+      setSelectedCold(prev => {
+        if (prev.includes(number)) return prev.filter(n => n !== number);
+        return prev.length < 2 ? [...prev, number] : prev;
+      });
+    }
+  }
+
+  const pickRandomNumbers = (numbers: number[], count: number): number[] => {
+      const shuffled = [...numbers].sort(() => 0.5 - Math.random());
+      return shuffled.slice(0, count).sort((a, b) => a - b);
+  }
+
+  const handleGenerateCustomGame = () => {
+    if (!analysisResult || selectedHot.length !== 2 || selectedCold.length !== 2) return;
+
+    const baseNumbers = [...selectedHot, ...selectedCold];
+    const remainingNumbers = config.betSize - baseNumbers.length;
+    
+    // Create a pool of "neutral" numbers
+    const hotNumbers = analysisResult.frequencies.slice(0, config.hotCount).map(f => f.number);
+    const coldNumbers = analysisResult.frequencies.slice(-config.coldCount).map(f => f.number);
+    const extremeNumbers = new Set([...hotNumbers, ...coldNumbers]);
+
+    const neutralPool = Array.from({ length: config.totalNumbers }, (_, i) => i + 1)
+        .filter(n => !extremeNumbers.has(n) && !baseNumbers.includes(n));
+    
+    const fillerNumbers = pickRandomNumbers(neutralPool, remainingNumbers);
+    
+    const customGame = [...baseNumbers, ...fillerNumbers].sort((a,b) => a-b);
+    
+    setSelectedSuggestion(customGame);
+    setSelectedSuggestionType('custom');
+  };
+
+  const requestSort = (key: SortKey) => {
+    let direction: 'asc' | 'desc' = 'asc';
+    if (sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc';
+    }
+    setSortConfig({ key, direction });
+  };
+  
+  const sortedIntervalStats = useMemo(() => {
+    if (!analysisResult) return [];
+    const sortableItems = [...analysisResult.intervalStats];
+    sortableItems.sort((a, b) => {
+      if (a[sortConfig.key] < b[sortConfig.key]) {
+        return sortConfig.direction === 'asc' ? -1 : 1;
+      }
+      if (a[sortConfig.key] > b[sortConfig.key]) {
+        return sortConfig.direction === 'asc' ? 1 : -1;
+      }
+      return 0;
+    });
+    return sortableItems;
+  }, [analysisResult, sortConfig]);
+
+  const chartData = useMemo(() => {
+    if (!analysisResult) return [];
+    // Create a copy to sort for the chart, preserving the original order
+    return [...analysisResult.frequencies].sort((a, b) => a.number - b.number);
+  }, [analysisResult]);
+
   const handleGeminiAnalysis = async () => {
-    if (!analysisResult) return;
+    if (!analysisResult || !suggestions) return;
     
     setIsGeminiLoading(true);
     setGeminiAnalysis(null);
     setError(null);
 
     try {
-      const ai = new GoogleGenAI({apiKey: process.env.API_KEY!});
+      const ai = new GoogleGenAI({apiKey: process.env.API_KEY});
 
       const prompt = `
-        Você é um especialista em análise de dados de loteria. Analise os seguintes dados para a ${config.name} e forneça um resumo perspicaz e fácil de entender para um leigo. 
-        **NUNCA** sugira que resultados passados podem prever o futuro. Enfatize que isso é uma análise histórica e que a loteria é um jogo de azar.
-        Seja breve e direto. Use markdown para formatação.
+        Você é um especialista em análise de dados de loteria. Analise os seguintes dados para a ${config.name} e forneça um resumo perspicaz e fácil de entender para um leigo.
+        **NUNCA** sugira que resultados passados podem prever o futuro. Enfatize que isso é uma análise histórica e que a loteria é um jogo de azar. A probabilidade de qualquer combinação específica ser sorteada é exatamente a mesma.
+        Seja breve e direto. Use markdown para formatação (negrito, listas).
 
-        Dados da Análise:
+        **Dados da Análise:**
         - Total de Sorteios Analisados: ${analysisResult.totalDraws}
-        - Números Mais Frequentes (Top 5): ${analysisResult.frequencies.slice(0, 5).map(f => `${f.number} (${f.count} vezes)`).join(', ')}
-        - Números Menos Frequentes (Top 5): ${analysisResult.frequencies.slice(-5).map(f => `${f.number} (${f.count} vezes)`).join(', ')}
-        - Pares de números que mais saíram juntos (Top 3): ${analysisResult.topPairs.slice(0, 3).map(p => `[${p.pair.join(', ')}] (${p.count} vezes)`).join('; ')}
+        - 5 Números Mais Frequentes: ${analysisResult.frequencies.slice(0, 5).map(f => `${String(f.number).padStart(2,'0')} (${f.count} vezes)`).join(', ')}
+        - 5 Números Menos Frequentes: ${analysisResult.frequencies.slice(-5).reverse().map(f => `${String(f.number).padStart(2,'0')} (${f.count} vezes)`).join(', ')}
+        - 3 Pares de números que mais saíram juntos: ${analysisResult.topPairs.slice(0, 3).map(p => `[${p.pair.join(', ')}] (${p.count} vezes)`).join('; ')}
         - Distribuição de Pares/Ímpares mais comum: ${analysisResult.evenOddDistribution[0]?.distribution} (${analysisResult.evenOddDistribution[0]?.count} vezes)
         - Sorteios Repetidos: ${analysisResult.repeatedDraws.length} sorteios se repetiram.
 
-        Seu Resumo:
+        **Sugestões de Jogos Geradas (baseadas em frequência histórica):**
+        - Sugestão "Quente": ${suggestions.hot.join(', ')} (baseada nos números mais frequentes)
+        - Sugestão "Fria": ${suggestions.cold.join(', ')} (baseada nos números menos frequentes)
+        - Sugestão "Mista": ${suggestions.mixed.join(', ')} (combinação de quentes e frios)
+
+        **Sua Tarefa:**
+        1.  **Resumo Geral:** Forneça um resumo dos "Dados da Análise".
+        2.  **Análise das Sugestões:**
+            *   Analise cada uma das três sugestões de jogos (Quente, Fria, Mista). Comente sobre a composição de cada uma (ex: "formada por números que saíram muito no passado").
+            *   **Probabilidade Real:** Deixe claro que a probabilidade de QUALQUER uma dessas sugestões ser sorteada é de ${config.probabilities[0].chance}, a mesma para qualquer outra combinação.
+            *   **Análise Histórica (NÃO PREVISÃO):** Com base nos dados, comente sobre o desempenho histórico de estratégias similares. Por exemplo, com que frequência o sorteio continha majoritariamente números "quentes"? Descreva se, olhando para o passado, essa seria uma estratégia de sucesso "alto" ou "baixo", mas **SEMPRE** termine com a advertência de que isso não influencia o futuro.
       `;
       
       const response = await ai.models.generateContent({
@@ -128,63 +302,186 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config }) => {
 
     } catch(e: any) {
         console.error("Gemini API error:", e);
-        setError("Não foi possível obter a análise do especialista. Verifique sua chave de API e a conexão.");
+        setError("Não foi possível obter a análise do especialista. Verifique a configuração e a conexão.");
     } finally {
         setIsGeminiLoading(false);
     }
   };
 
-  const renderSuggestions = () => {
-    if (!suggestions) return null;
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length && analysisResult) {
+      const numberData = payload[0].payload;
+      const contests = analysisResult.drawsByNumber.get(numberData.number) || [];
+      const contestPreview = contests.slice(0, 5).join(', ');
+      const hasMoreContests = contests.length > 5;
 
-    const tabs: { key: SuggestionType, label: string }[] = [
-      { key: 'hot', label: 'Quentes' },
-      { key: 'cold', label: 'Frios' },
-      { key: 'mixed', label: 'Mistos' },
-    ];
-    
-    const currentSuggestion = suggestions[activeSuggestionTab] || [];
-
-    return (
-        <div className="mt-6">
-            <h3 className="text-xl font-bold text-slate-800 dark:text-slate-200 mb-4">Sugestões de Jogo</h3>
-             <div className="flex space-x-2 border-b border-slate-200 dark:border-slate-700 mb-4">
-                 {tabs.map(tab => (
-                     <button key={tab.key} onClick={() => setActiveSuggestionTab(tab.key)} className={`px-4 py-2 text-sm font-semibold border-b-2 transition-colors ${activeSuggestionTab === tab.key ? `border-blue-500 text-blue-600 dark:text-blue-400` : `border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300`}`}>
-                         {tab.label}
-                     </button>
-                 ))}
-             </div>
-             <div className="flex flex-wrap gap-2 mb-4">
-                 {currentSuggestion.map(num => <NumberBall key={num} number={num} color={config.color} />)}
-             </div>
-             <button
-                onClick={handleRegenerateSuggestions}
-                className="px-4 py-2 text-sm font-semibold rounded-md text-white transition-colors duration-200 shadow-md"
-                style={{ backgroundColor: config.color }}
-            >
-                Gerar Nova Sugestão
-            </button>
+      return (
+        <div className="p-3 rounded-lg shadow-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200" >
+          <p className="font-bold text-lg" style={{ color: config.color }}>Número {label}</p>
+          <p className="text-sm text-slate-600 dark:text-slate-300">Frequência: {numberData.count} vezes</p>
+          {contests.length > 0 && (
+            <>
+              <hr className="my-2 border-slate-200 dark:border-slate-700" />
+              <p className="text-xs text-slate-500 dark:text-slate-400 font-mono">
+                Sorteado em: {contestPreview}{hasMoreContests ? '...' : ''}
+              </p>
+              <p className="text-xs text-slate-400 dark:text-slate-500 mt-1 italic">Clique na barra para ver todos os concursos.</p>
+            </>
+          )}
         </div>
-    );
+      );
+    }
+    return null;
   };
-  
+
+
   const renderAnalysis = () => {
       if (!analysisResult) return null;
       
       const { fileName, totalDraws, frequencies, repeatedDraws, lastDraws, topPairs, evenOddDistribution } = analysisResult;
+      const hotNumbers = frequencies.slice(0, config.hotCount);
+      const coldNumbers = frequencies.slice(-config.coldCount).reverse();
 
       return (
-          <div>
-              <div className="mb-6 p-4 border-l-4 rounded-r-lg bg-slate-100 dark:bg-slate-700" style={{ borderColor: config.color }}>
+        <div className="animate-fade-in-scale">
+          {/* --- MODAL --- */}
+          {selectedNumber && (
+            <div 
+              className="fixed inset-0 bg-black/60 z-50 flex justify-center items-center p-4"
+              onClick={() => setSelectedNumber(null)}
+            >
+              <div 
+                className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-md animate-fade-in-scale"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="p-6">
+                  <div className="flex items-center gap-4 mb-4">
+                    <NumberBall number={selectedNumber.number} color={config.color} />
+                    <div>
+                      <h3 className="text-2xl font-bold text-slate-900 dark:text-white">Número {String(selectedNumber.number).padStart(2, '0')}</h3>
+                      <p className="text-slate-500 dark:text-slate-400">Sorteado {selectedNumber.contests.length} vezes</p>
+                    </div>
+                  </div>
+                  <p className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Sorteado nos concursos:</p>
+                  <div className="max-h-60 overflow-y-auto bg-slate-100 dark:bg-slate-900/50 p-3 rounded-lg">
+                    <p className="text-sm text-slate-600 dark:text-slate-400 font-mono tracking-wider leading-relaxed">
+                      {selectedNumber.contests.length > 0 ? selectedNumber.contests.join(', ') : 'Nenhum sorteio registrado.'}
+                    </p>
+                  </div>
+                </div>
+                <div className="bg-slate-50 dark:bg-slate-800/50 px-6 py-3 text-right rounded-b-xl">
+                    <button 
+                        onClick={() => setSelectedNumber(null)}
+                        className="px-4 py-2 text-sm font-semibold rounded-md text-white"
+                        style={{backgroundColor: config.color}}
+                    >
+                        Fechar
+                    </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="mb-6 p-4 border-l-4 rounded-r-lg bg-slate-100 dark:bg-slate-700/50" style={{ borderColor: config.color }}>
+              <div className="flex flex-wrap justify-between items-center gap-4">
+                <div>
                   <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Análise de <span style={{ color: config.color }}>{config.name}</span></h2>
-                  <p className="text-sm text-slate-600 dark:text-slate-400">Arquivo: {fileName} | Total de Sorteios: {totalDraws}</p>
+                  <p className="text-sm text-slate-600 dark:text-slate-400">Arquivo: {fileName} | Sorteios no período: {totalDraws}</p>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap text-sm">
+                   <label htmlFor="start-date">De:</label>
+                   <input type="date" id="start-date" value={startDate} onChange={e => setStartDate(e.target.value)} className="p-1 border rounded bg-slate-200 dark:bg-slate-800 border-slate-300 dark:border-slate-600"/>
+                   <label htmlFor="end-date">Até:</label>
+                   <input type="date" id="end-date" value={endDate} onChange={e => setEndDate(e.target.value)} className="p-1 border rounded bg-slate-200 dark:bg-slate-800 border-slate-300 dark:border-slate-600"/>
+                   <button onClick={handleFilterApply} className="px-3 py-1 font-semibold rounded-md text-white" style={{ backgroundColor: config.color }}>Aplicar</button>
+                   <button onClick={handleFilterClear} className="px-3 py-1 font-semibold rounded-md bg-slate-300 dark:bg-slate-600 text-slate-800 dark:text-slate-200">Limpar</button>
+                </div>
+              </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
+            {/* Coluna da Esquerda (Sugestões e Seleção) */}
+            <div className="lg:col-span-1 space-y-6">
+              
+              {/* Regras e Probabilidades */}
+              <div className="bg-slate-100 dark:bg-slate-900/50 p-4 rounded-xl">
+                <h3 className="font-bold text-lg mb-3 text-slate-800 dark:text-slate-200">Regras e Probabilidades</h3>
+                <div className="text-sm space-y-2 text-slate-600 dark:text-slate-400">
+                  <div className="flex justify-between"><span>Universo de Números:</span><span className="font-semibold">{config.totalNumbers}</span></div>
+                  <div className="flex justify-between"><span>Dezenas Sorteadas:</span><span className="font-semibold">{config.drawSize}</span></div>
+                  <div className="flex justify-between"><span>Aposta Padrão:</span><span className="font-semibold">{config.betSize}</span></div>
+                  <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-700">
+                    {config.probabilities.map(p => (
+                       <div key={p.name} className="flex justify-between"><span>{p.name}:</span><span className="font-semibold">{p.chance}</span></div>
+                    ))}
+                  </div>
+                </div>
               </div>
 
+              {/* Sugestões */}
+              {suggestions && (
+                <div className="bg-slate-100 dark:bg-slate-900/50 p-4 rounded-xl">
+                   <div className="flex justify-between items-center mb-4">
+                     <h3 className="font-bold text-lg text-slate-800 dark:text-slate-200">Sugestões de Jogos</h3>
+                     <button
+                        onClick={handleRegenerateSuggestions}
+                        className="px-3 py-1 text-xs font-semibold rounded-full text-white transition-colors duration-200 shadow-sm"
+                        style={{ backgroundColor: config.color }}
+                      >
+                        Gerar Novas
+                      </button>
+                   </div>
+                  
+                  { (['hot', 'cold', 'mixed'] as (keyof GameSuggestions)[]).map(type => (
+                      <div 
+                        key={type}
+                        onClick={() => handleSelectSuggestion(type)}
+                        className={`p-3 rounded-lg mb-2 cursor-pointer transition-all duration-200 border-2 ${selectedSuggestionType === type ? 'border-opacity-100 shadow-lg' : 'border-transparent hover:bg-slate-200 dark:hover:bg-slate-700'}`}
+                        style={{ borderColor: selectedSuggestionType === type ? config.color : 'transparent' }}
+                      >
+                         <h4 className="font-semibold text-slate-700 dark:text-slate-300 mb-2 capitalize">{type === 'hot' ? 'Quente' : type === 'cold' ? 'Frio' : 'Misto'}</h4>
+                         <div className="flex flex-wrap gap-1">
+                            {suggestions[type].map(num => <NumberBall key={num} number={num} color={config.color} size="small"/>)}
+                         </div>
+                      </div>
+                  )) }
+                </div>
+              )}
+
+              {/* Jogo Selecionado */}
+              {selectedSuggestion && (
+                  <div className="bg-slate-100 dark:bg-slate-900/50 p-4 rounded-xl animate-fade-in-scale">
+                      <h3 className="font-bold text-lg mb-3 text-slate-800 dark:text-slate-200">Seu Jogo Selecionado</h3>
+                      <div className="flex flex-wrap gap-2 mb-4">
+                        {selectedSuggestion.map(num => <NumberBall key={num} number={num} color={config.color}/>)}
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={handleCopy}
+                          className="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold rounded-md text-white transition-colors duration-200 shadow-md"
+                          style={{ backgroundColor: isCopied ? '#10B981' : config.color }}
+                        >
+                          {isCopied ? <CheckIcon /> : <CopyIcon />}
+                          {isCopied ? 'Copiado!' : 'Copiar'}
+                        </button>
+                        <button
+                            onClick={() => { setSelectedSuggestion(null); setSelectedSuggestionType(null); }}
+                            className="w-full px-4 py-2 text-sm font-semibold rounded-md bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-600"
+                        >
+                            Limpar
+                        </button>
+                      </div>
+                  </div>
+              )}
+            </div>
+
+            {/* Coluna da Direita (Análises) */}
+            <div className="lg:col-span-2 space-y-6">
               {/* Gemini Analysis Section */}
-              <div className="mb-8">
-                  <h3 className="text-xl font-bold text-slate-800 dark:text-slate-200 mb-2">Análise do Especialista (IA)</h3>
-                  <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">Clique no botão para obter um resumo dos dados gerado por inteligência artificial.</p>
+              <div className="bg-slate-100 dark:bg-slate-900/50 p-4 rounded-xl">
+                  <h3 className="font-bold text-lg mb-2 text-slate-800 dark:text-slate-200">Análise do Especialista (IA)</h3>
+                  <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">Clique para obter um resumo dos dados gerado por inteligência artificial, utilizando a API do Google Gemini.</p>
                   <button
                     onClick={handleGeminiAnalysis}
                     disabled={isGeminiLoading}
@@ -193,85 +490,218 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config }) => {
                    >
                        {isGeminiLoading ? 'Analisando...' : 'Obter Análise da IA'}
                    </button>
-                   {isGeminiLoading && <div className="mt-4 text-sm text-slate-500">Aguarde, a IA está processando os dados...</div>}
+                   {isGeminiLoading && <div className="mt-4 text-sm text-slate-500 animate-pulse">Aguarde, a IA está processando os dados...</div>}
+                   {error && !geminiAnalysis && (
+                     <p className="mt-4 text-sm text-red-600 dark:text-red-400">{error}</p>
+                   )}
                    {geminiAnalysis && (
-                       <div className="text-sm font-sans whitespace-pre-wrap mt-4 p-4 bg-slate-100 dark:bg-slate-900/50 rounded-lg">{geminiAnalysis}</div>
+                       <div 
+                         className="prose prose-sm dark:prose-invert max-w-none mt-4 p-4 bg-white/50 dark:bg-slate-800/50 rounded-lg whitespace-pre-wrap"
+                         dangerouslySetInnerHTML={{ __html: geminiAnalysis.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\* (.*?)(?=\n\* |\n\n|$)/g, '<li>$1</li>').replace(/(\r\n|\n|\r)/gm,"<br>") }}
+                        />
                    )}
               </div>
-
-              <div className="space-y-8">
-                  {/* Frequency Analysis */}
+              
+              {/* Frequência Geral */}
+              <div className="bg-slate-100 dark:bg-slate-900/50 p-4 rounded-xl">
+                 <h3 className="font-bold text-lg mb-3 text-slate-800 dark:text-slate-200">Frequência Geral dos Números</h3>
+                 <div className="w-full h-80">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartData} margin={{ top: 5, right: 20, left: -10, bottom: 5 }} onClick={handleChartClick}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={isDarkMode ? "#334155" : "#e2e8f0"} />
+                      <XAxis dataKey="number" tick={{ fill: isDarkMode ? '#94a3b8' : '#64748b', fontSize: 12 }} />
+                      <YAxis tick={{ fill: isDarkMode ? '#94a3b8' : '#64748b', fontSize: 12 }} />
+                      <Tooltip
+                        cursor={{ fill: `${config.color}20` }}
+                        content={<CustomTooltip />}
+                      />
+                      <Bar dataKey="count" name="Frequência">
+                        {chartData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={config.color} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                 </div>
+              </div>
+              
+              {/* Gerador Misto Personalizado */}
+              <div className="bg-slate-100 dark:bg-slate-900/50 p-4 rounded-xl">
+                <h3 className="font-bold text-lg mb-3 text-slate-800 dark:text-slate-200">Gerador Misto Personalizado</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+                    Selecione 2 números quentes e 2 frios abaixo para criar um jogo misto com base na sua escolha. O restante será preenchido com números "neutros".
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
                   <div>
-                      <h3 className="text-xl font-bold text-slate-800 dark:text-slate-200 mb-4">Frequência dos Números</h3>
-                      <FrequencyChart data={frequencies} color={config.color} totalDraws={totalDraws} />
+                    <h4 className="font-semibold text-center mb-2">Quentes (Selecione 2)</h4>
+                    <div className="flex flex-wrap gap-2 justify-center">
+                        {hotNumbers.map(({number}) => (
+                            <button key={number} onClick={() => handleCustomNumberSelect(number, 'hot')} className={`w-10 h-10 rounded-full font-bold transition-all text-sm ${selectedHot.includes(number) ? 'ring-2 ring-offset-2 dark:ring-offset-slate-900' : ''}`} style={{ backgroundColor: config.color, color: 'white', '--tw-ring-color': config.color } as React.CSSProperties}>
+                                {String(number).padStart(2,'0')}
+                            </button>
+                        ))}
+                    </div>
                   </div>
-                  
-                  {/* Suggestions */}
-                  {renderSuggestions()}
-                  
-                  {/* Last Draws */}
-                   <div className="mt-6">
-                      <h3 className="text-xl font-bold text-slate-800 dark:text-slate-200 mb-4">Últimos {lastDraws.length} Sorteios</h3>
-                      <div className="space-y-3">
-                          {lastDraws.map(({contest, draw}) => (
-                              <div key={String(contest)} className="flex items-center justify-between p-2 rounded-lg bg-slate-100 dark:bg-slate-700/50">
-                                  <span className="font-mono text-sm text-slate-500 dark:text-slate-400">Concurso {contest}</span>
-                                  <div className="flex flex-wrap gap-1">
-                                      {draw.map(num => <NumberBall key={num} number={num} color={config.color} size="small"/>)}
-                                  </div>
+                   <div>
+                    <h4 className="font-semibold text-center mb-2">Frios (Selecione 2)</h4>
+                    <div className="flex flex-wrap gap-2 justify-center">
+                        {coldNumbers.map(({number}) => (
+                           <button key={number} onClick={() => handleCustomNumberSelect(number, 'cold')} className={`w-10 h-10 rounded-full font-bold transition-all text-sm bg-slate-400 dark:bg-slate-600 text-white ${selectedCold.includes(number) ? 'ring-2 ring-offset-2 dark:ring-offset-slate-900 ring-slate-500' : ''}`}>
+                               {String(number).padStart(2,'0')}
+                           </button>
+                        ))}
+                    </div>
+                  </div>
+                </div>
+                <button
+                    onClick={handleGenerateCustomGame}
+                    disabled={selectedHot.length !== 2 || selectedCold.length !== 2}
+                    className="w-full px-4 py-2 font-semibold rounded-md text-white shadow-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    style={{ backgroundColor: config.color }}
+                >
+                    Gerar Jogo
+                </button>
+              </div>
+
+              {/* Números Quentes e Frios */}
+              <div className="bg-slate-100 dark:bg-slate-900/50 p-4 rounded-xl">
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                      <h4 className="font-bold mb-3 text-slate-800 dark:text-slate-200 flex items-center gap-2"><HotIcon/> Números Quentes <span className="text-xs font-normal text-slate-500">(Top {config.hotCount})</span></h4>
+                      <div className="flex flex-wrap gap-2">
+                          {hotNumbers.map(({number, count}) => (
+                              <div key={number} onClick={() => handleNumberClick(number)} className="cursor-pointer">
+                                  <NumberBall number={number} color={`${config.color}`}/>
                               </div>
                           ))}
                       </div>
-                  </div>
-                  
-                  {/* Advanced Stats */}
-                   <div className="mt-6">
-                       <h3 className="text-xl font-bold text-slate-800 dark:text-slate-200 mb-4">Estatísticas Avançadas</h3>
-                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                           {/* Top Pairs */}
-                           <div className="p-4 rounded-lg bg-slate-100 dark:bg-slate-700/50">
-                               <h4 className="font-bold mb-2">Pares Mais Frequentes</h4>
-                               <ul className="space-y-2 text-sm">
-                                   {topPairs.map(({pair, count}) => (
-                                       <li key={pair.join('-')} className="flex justify-between">
-                                           <span>{pair.join(' & ')}</span>
-                                           <span className="font-semibold text-slate-600 dark:text-slate-300">{count} vezes</span>
-                                       </li>
-                                   ))}
-                               </ul>
-                           </div>
-                           
-                           {/* Even/Odd */}
-                            <div className="p-4 rounded-lg bg-slate-100 dark:bg-slate-700/50">
-                               <h4 className="font-bold mb-2">Distribuição Pares/Ímpares</h4>
-                               <ul className="space-y-2 text-sm">
-                                   {evenOddDistribution.map(({distribution, count}) => (
-                                       <li key={distribution} className="flex justify-between">
-                                           <span>{distribution}</span>
-                                           <span className="font-semibold text-slate-600 dark:text-slate-300">{count} vezes</span>
-                                       </li>
-                                   ))}
-                               </ul>
-                           </div>
-                           
-                           {/* Repeated Draws */}
-                           {repeatedDraws.length > 0 && (
-                                <div className="md:col-span-2 p-4 rounded-lg bg-slate-100 dark:bg-slate-700/50">
-                                   <h4 className="font-bold mb-2">Sorteios Repetidos ({repeatedDraws.length})</h4>
-                                   <div className="text-sm max-h-40 overflow-y-auto">
-                                       {repeatedDraws.map(({draw, contests}) => (
-                                           <p key={draw.join('-')} className="mb-1">
-                                               <strong>{draw.join(', ')}</strong> - Concursos: {contests.join(', ')}
-                                           </p>
-                                       ))}
-                                   </div>
-                               </div>
-                           )}
-
-                       </div>
-                   </div>
+                    </div>
+                     <div>
+                      <h4 className="font-bold mb-3 text-slate-800 dark:text-slate-200 flex items-center gap-2"><ColdIcon/> Números Frios <span className="text-xs font-normal text-slate-500">(Top {config.coldCount})</span></h4>
+                      <div className="flex flex-wrap gap-2">
+                          {coldNumbers.map(({number, count}) => (
+                             <div key={number} onClick={() => handleNumberClick(number)} className="cursor-pointer">
+                                  <NumberBall number={number} color={`bg-slate-400 dark:bg-slate-600`}/>
+                              </div>
+                          ))}
+                      </div>
+                    </div>
+                 </div>
               </div>
+              
+               {/* Advanced Stats */}
+               <div className="bg-slate-100 dark:bg-slate-900/50 p-4 rounded-xl">
+                 <h3 className="font-bold text-lg mb-3 text-slate-800 dark:text-slate-200">Estatísticas Avançadas</h3>
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                     {/* Top Pairs */}
+                     <div>
+                         <h4 className="font-bold mb-2">Pares Mais Frequentes (Top 10)</h4>
+                         <div className="space-y-2 text-sm">
+                             {topPairs.map(({pair, count}) => (
+                                 <div key={pair.join('-')} className="flex items-center justify-between text-slate-600 dark:text-slate-400">
+                                      <div className="flex items-center gap-1">
+                                         <NumberBall number={pair[0]} color={config.color} size="small" />
+                                         <NumberBall number={pair[1]} color={config.color} size="small" />
+                                      </div>
+                                     <span className="font-semibold text-slate-500 dark:text-slate-300">{count} vezes</span>
+                                 </div>
+                             ))}
+                         </div>
+                     </div>
+                     
+                     {/* Even/Odd */}
+                      <div>
+                         <h4 className="font-bold mb-2">Distribuição Pares/Ímpares (Top 5)</h4>
+                         <div className="space-y-3 text-sm text-slate-600 dark:text-slate-400">
+                             {evenOddDistribution.slice(0, 5).map(({distribution, count}) => (
+                                 <div key={distribution}>
+                                     <div className="flex justify-between mb-1">
+                                         <span>{distribution}</span>
+                                         <span className="font-semibold text-slate-500 dark:text-slate-300">{count}x</span>
+                                     </div>
+                                     <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2">
+                                         <div className="h-2 rounded-full" style={{ width: `${(count / totalDraws) * 100}%`, backgroundColor: config.color }}></div>
+                                     </div>
+                                 </div>
+                             ))}
+                         </div>
+                     </div>
+                     
+                     {/* Repeated Draws */}
+                     {repeatedDraws.length > 0 && (
+                          <div className="md:col-span-2">
+                             <h4 className="font-bold mb-2">Sorteios Repetidos ({repeatedDraws.length})</h4>
+                             <div className="text-sm max-h-32 overflow-y-auto p-2 bg-slate-200/50 dark:bg-slate-800/50 rounded-md text-slate-600 dark:text-slate-400">
+                                 {repeatedDraws.map(({draw, contests}) => (
+                                     <p key={draw.join('-')} className="mb-1">
+                                         <strong>{draw.join(', ')}</strong> - nos concursos: {contests.join(', ')}
+                                     </p>
+                                 ))}
+                             </div>
+                         </div>
+                     )}
+                 </div>
+               </div>
+
+                {/* Interval Analysis */}
+                <div className="bg-slate-100 dark:bg-slate-900/50 p-4 rounded-xl">
+                    <h3 className="font-bold text-lg mb-3 text-slate-800 dark:text-slate-200">Análise de Intervalos e Atrasos</h3>
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm text-left text-slate-500 dark:text-slate-400">
+                            <thead className="text-xs text-slate-700 uppercase bg-slate-200/50 dark:bg-slate-700/50 dark:text-slate-300">
+                                <tr>
+                                    {([
+                                        {key: 'number', label: 'Número'},
+                                        {key: 'currentDelay', label: 'Atraso Atual'},
+                                        {key: 'avgInterval', label: 'Intervalo Médio'},
+                                        {key: 'maxDelay', label: 'Maior Atraso'}
+                                    ] as {key: SortKey, label: string}[])
+                                    .map(({key: columnKey, label}) => (
+                                        <th key={columnKey} scope="col" className="px-4 py-3 cursor-pointer" onClick={() => requestSort(columnKey)}>
+                                            {label} {sortConfig.key === columnKey ? (sortConfig.direction === 'asc' ? '▲' : '▼') : ''}
+                                        </th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {sortedIntervalStats.map(stat => (
+                                    <tr key={stat.number} className="bg-white dark:bg-slate-800 border-b dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600/50">
+                                        <th scope="row" className="px-4 py-3 font-medium text-slate-900 whitespace-nowrap dark:text-white">{String(stat.number).padStart(2, '0')}</th>
+                                        <td className={`px-4 py-3 font-semibold ${stat.currentDelay > stat.avgInterval && stat.avgInterval > 0 ? 'text-red-500' : ''}`}>{stat.currentDelay}</td>
+                                        <td className="px-4 py-3">{stat.avgInterval}</td>
+                                        <td className="px-4 py-3">{stat.maxDelay}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+              {/* Last Draws */}
+              <div className="bg-slate-100 dark:bg-slate-900/50 rounded-xl">
+                <button
+                  onClick={() => setIsLastDrawsVisible(!isLastDrawsVisible)}
+                  className="w-full p-4 text-left font-bold text-lg text-slate-800 dark:text-slate-200 flex justify-between items-center"
+                >
+                  <span>Últimos 10 Sorteios do Período</span>
+                  <svg xmlns="http://www.w3.org/2000/svg" className={`h-5 w-5 transition-transform ${isLastDrawsVisible ? 'rotate-180' : ''}`} viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" /></svg>
+                </button>
+                {isLastDrawsVisible && (
+                  <div className="p-4 pt-0 space-y-3 animate-fade-in-scale">
+                      {lastDraws.map(({contest, draw}) => (
+                          <div key={String(contest)} className="flex items-center justify-between p-2 rounded-lg bg-slate-200/50 dark:bg-slate-800/50">
+                              <span className="font-mono text-sm text-slate-500 dark:text-slate-400">Concurso {contest}</span>
+                              <div className="flex flex-wrap gap-1">
+                                  {draw.map(num => <NumberBall key={num} number={num} color={config.color} size="small"/>)}
+                              </div>
+                          </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
+        </div>
       );
   };
 
@@ -288,37 +718,37 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config }) => {
 
       {isLoading && (
         <div className="text-center p-10">
-          <div className="w-12 h-12 border-4 border-dashed rounded-full animate-spin mx-auto" style={{ borderColor: `${config.color} transparent` }}></div>
+          <div className="w-12 h-12 border-4 border-dashed rounded-full animate-spin mx-auto dark:border-slate-600" style={{ borderTopColor: config.color }}></div>
           <p className="mt-4 font-semibold">Analisando dados...</p>
         </div>
       )}
 
-      {error && (
+      {error && !isLoading && (
         <div className="text-center p-10 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded-lg">
-          <h3 className="font-bold">Ocorreu um Erro</h3>
-          <p className="text-sm mt-2">{error}</p>
+          <h3 className="font-bold">Ocorreu um Erro na Análise</h3>
+          <p className="text-sm mt-2 max-w-md mx-auto">{error}</p>
            <button
               onClick={handleFileUploadClick}
               className="mt-4 px-4 py-2 text-sm font-semibold rounded-md text-white bg-red-600 hover:bg-red-700"
             >
-             Tentar Novamente
+             Selecionar Outro Arquivo
             </button>
         </div>
       )}
       
       {!isLoading && !analysisResult && !error && (
-        <div className="text-center py-12 px-6 border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-xl">
+        <div className="text-center py-12 px-6 border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-xl transition-all hover:border-slate-400 dark:hover:border-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/50">
             <div 
-              className="w-16 h-16 mx-auto rounded-full flex items-center justify-center mb-4"
-              style={{ backgroundColor: `${config.color}20` /* 20% opacity */ }}
+              className="w-16 h-16 mx-auto rounded-full flex items-center justify-center mb-4 transition-colors"
+              style={{ backgroundColor: `${config.color}20` }}
             >
-               <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" style={{ color: config.color }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+               <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 transition-colors" style={{ color: config.color }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                 </svg>
             </div>
           <h2 className="text-xl font-bold text-slate-800 dark:text-slate-200">Comece sua Análise da {config.name}</h2>
           <p className="text-slate-500 dark:text-slate-400 mt-2 mb-6 max-w-lg mx-auto">
-            Faça o upload do seu arquivo de resultados (.csv ou .xlsx) para gerar estatísticas, visualizar dados e obter sugestões.
+            Faça o upload do seu arquivo de resultados (.csv ou .xlsx) para gerar estatísticas e visualizar os dados.
           </p>
           <button
             onClick={handleFileUploadClick}
