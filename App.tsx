@@ -4,6 +4,14 @@ import { LOTTERY_CONFIGS } from './constants';
 import type { LotteryConfig, LotteryKey } from './types';
 import LotteryAnalysis from './components/LotteryAnalysis';
 import DarkModeToggle from './components/DarkModeToggle';
+import { MegaSenaIcon, QuinaIcon, LotofacilIcon, LotomaniaIcon } from './components/LotteryIcons';
+
+const iconMap: Record<LotteryKey, React.FC<{ className?: string }>> = {
+  megaSena: MegaSenaIcon,
+  quina: QuinaIcon,
+  lotofacil: LotofacilIcon,
+  lotomania: LotomaniaIcon,
+};
 
 const App: React.FC = () => {
   const [activeLottery, setActiveLottery] = useState<LotteryKey>('megaSena');
@@ -25,17 +33,19 @@ const App: React.FC = () => {
     return (Object.keys(LOTTERY_CONFIGS) as LotteryKey[]).map((key) => {
       const config = LOTTERY_CONFIGS[key];
       const isActive = activeLottery === key;
+      const Icon = iconMap[key];
       return (
         <button
           key={key}
           onClick={() => setActiveLottery(key)}
-          className={`px-4 py-2 text-sm font-semibold rounded-md transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-50 dark:focus:ring-offset-slate-900 ${
+          className={`inline-flex items-center justify-center px-4 py-2 text-sm font-semibold rounded-md transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-50 dark:focus:ring-offset-slate-900 ${
             isActive
               ? 'text-white shadow-lg'
               : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-600'
           }`}
           style={{ backgroundColor: isActive ? config.color : '' }}
         >
+          <Icon className="w-5 h-5 mr-2" />
           {config.name}
         </button>
       );

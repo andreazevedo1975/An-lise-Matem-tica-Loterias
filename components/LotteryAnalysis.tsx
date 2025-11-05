@@ -1,87 +1,63 @@
-import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-// Corrected: Import GoogleGenAI according to guidelines
+// Fix: Recreated the content for the LotteryAnalysis component.
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { GoogleGenAI } from '@google/genai';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
-import type { LotteryConfig, AnalysisResult, SuggestionType, GameSuggestions, Frequency } from '../types';
 import { analyzeLotteryData, regenerateSuggestions } from '../services/analysisService';
+import type { LotteryConfig, AnalysisResult, GameSuggestions, SuggestionType, Frequency } from '../types';
 import NumberBall from './NumberBall';
 
-const FileUploadIcon = () => (
-    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-    </svg>
-);
+// A placeholder for a bar chart
+const FrequencyChart = ({ data, color, totalDraws }: { data: Frequency[], color: string, totalDraws: number }) => {
+  const maxCount = Math.max(...data.map(d => d.count), 0);
 
-const CopyIcon = () => (
-    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-    </svg>
-);
-
-const ClearIcon = () => (
-    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-    </svg>
-);
-
-const LoadingSpinner = () => (
-    <div className="flex justify-center items-center p-8">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-slate-500"></div>
-    </div>
-);
-
-const Card: React.FC<{ title: string, children: React.ReactNode, actions?: React.ReactNode, className?: string }> = ({ title, children, actions, className = '' }) => (
-    <div className={`bg-slate-50 dark:bg-slate-800/50 rounded-lg shadow-md p-4 sm:p-6 ${className}`}>
-        <div className="flex justify-between items-center mb-4">
-            <h3 className="text-xl font-bold text-slate-800 dark:text-slate-200" style={{ color: 'inherit' }}>{title}</h3>
-            {actions && <div className="flex-shrink-0">{actions}</div>}
+  return (
+    <div className="grid grid-cols-5 sm:grid-cols-10 gap-2">
+      {data.sort((a, b) => a.number - b.number).map(({ number, count }) => (
+        <div key={number} className="group relative flex flex-col items-center">
+          <div className="w-full h-32 bg-slate-200 dark:bg-slate-700 rounded-md flex flex-col-reverse">
+            <div
+              className="w-full rounded-md"
+              style={{
+                height: `${maxCount > 0 ? (count / maxCount) * 100 : 0}%`,
+                backgroundColor: color,
+              }}
+            ></div>
+          </div>
+          <span className="text-xs font-semibold mt-1">{String(number).padStart(2, '0')}</span>
+           <div className="absolute bottom-full mb-2 w-max p-2 text-xs text-white bg-slate-900 rounded-md opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none">
+            Sorteado {count} vezes ({totalDraws > 0 ? ((count/totalDraws)*100).toFixed(2) : 0}%)
+          </div>
         </div>
-        <div>{children}</div>
+      ))}
     </div>
-);
+  );
+};
 
 interface LotteryAnalysisProps {
   config: LotteryConfig;
   isDarkMode: boolean;
 }
 
-const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode }) => {
+const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config }) => {
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [geminiAnalysis, setGeminiAnalysis] = useState<string | null>(null);
+  const [isGeminiLoading, setIsGeminiLoading] = useState(false);
+
+  const [activeSuggestionTab, setActiveSuggestionTab] = useState<SuggestionType>('hot');
   const [suggestions, setSuggestions] = useState<GameSuggestions | null>(null);
-  const [selectedSuggestion, setSelectedSuggestion] = useState<number[] | null>(null);
-  const [selectedSuggestionType, setSelectedSuggestionType] = useState<SuggestionType | null>(null);
-  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied'>('idle');
-  const [aiInsight, setAiInsight] = useState<string | null>(null);
-  const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
-  const [selectedNumberDetails, setSelectedNumberDetails] = useState<number | null>(null);
-  const [selectedHotForCustom, setSelectedHotForCustom] = useState<number[]>([]);
-  const [selectedColdForCustom, setSelectedColdForCustom] = useState<number[]>([]);
-  
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    // Reset state when config changes
     setAnalysisResult(null);
     setError(null);
+    setGeminiAnalysis(null);
     setIsLoading(false);
+    setIsGeminiLoading(false);
     setSuggestions(null);
-    setSelectedSuggestion(null);
-    setSelectedSuggestionType(null);
-    setAiInsight(null);
-    setIsAiLoading(false);
-    setSelectedNumberDetails(null);
-    setSelectedHotForCustom([]);
-    setSelectedColdForCustom([]);
-    if(fileInputRef.current) {
-        fileInputRef.current.value = '';
-    }
-  }, [config.key]);
-  
-  const pickRandomNumbers = (numbers: number[], count: number): number[] => {
-      const shuffled = [...numbers].sort(() => 0.5 - Math.random());
-      return shuffled.slice(0, count).sort((a, b) => a - b);
-  }
+  }, [config]);
 
   const handleFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -90,423 +66,272 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode })
     setIsLoading(true);
     setError(null);
     setAnalysisResult(null);
-    setSelectedSuggestion(null);
-    setSelectedSuggestionType(null);
-    setAiInsight(null);
-    setSelectedNumberDetails(null);
-    setSelectedHotForCustom([]);
-    setSelectedColdForCustom([]);
-
+    setGeminiAnalysis(null);
+    
     try {
       const result = await analyzeLotteryData(file, config);
       setAnalysisResult(result);
       setSuggestions(result.suggestions);
     } catch (e: any) {
-      setError(e.message || 'Ocorreu um erro desconhecido durante a análise.');
+      setError(e.message || 'Ocorreu um erro ao analisar o arquivo.');
     } finally {
       setIsLoading(false);
+      // Reset file input value to allow re-uploading the same file
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     }
   }, [config]);
-  
-  const handleRegenerateSuggestions = useCallback(() => {
+
+  const handleFileUploadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleRegenerateSuggestions = () => {
     if (!analysisResult) return;
     const newSuggestions = regenerateSuggestions(analysisResult.frequencies, config);
     setSuggestions(newSuggestions);
-    setSelectedSuggestion(null);
-    setSelectedSuggestionType(null);
-  }, [analysisResult, config]);
-
-  const handleSelectSuggestion = (numbers: number[], type: SuggestionType) => {
-    setSelectedSuggestion(numbers);
-    setSelectedSuggestionType(type);
   };
   
-  const handleNumberClick = (data: any) => {
-    if (data && data.activePayload && data.activePayload[0]) {
-      const number = data.activePayload[0].payload.number;
-      setSelectedNumberDetails(number);
-    }
-  };
-
-  const handleClearSelection = () => {
-    setSelectedSuggestion(null);
-    setSelectedSuggestionType(null);
-  };
-
-  const handleCopyToClipboard = () => {
-    if (!selectedSuggestion) return;
-    navigator.clipboard.writeText(selectedSuggestion.join(' - ')).then(() => {
-        setCopyStatus('copied');
-        setTimeout(() => setCopyStatus('idle'), 2000);
-    });
-  };
-
-  const getAiInsight = useCallback(async () => {
+  const handleGeminiAnalysis = async () => {
     if (!analysisResult) return;
-
-    setIsAiLoading(true);
-    setAiInsight(null);
+    
+    setIsGeminiLoading(true);
+    setGeminiAnalysis(null);
     setError(null);
 
     try {
       const ai = new GoogleGenAI({apiKey: process.env.API_KEY!});
 
-      const hotNumbers = analysisResult.frequencies.slice(0, 10).map(f => f.number);
-      const coldNumbers = analysisResult.frequencies.slice(-10).map(f => f.number);
+      const prompt = `
+        Você é um especialista em análise de dados de loteria. Analise os seguintes dados para a ${config.name} e forneça um resumo perspicaz e fácil de entender para um leigo. 
+        **NUNCA** sugira que resultados passados podem prever o futuro. Enfatize que isso é uma análise histórica e que a loteria é um jogo de azar.
+        Seja breve e direto. Use markdown para formatação.
 
-      const prompt = `Você é um especialista em análise de loterias. Com base nos seguintes dados da ${config.name}, forneça uma breve análise em português.
-- Total de Sorteios Analisados: ${analysisResult.totalDraws}
-- Números Mais Frequentes (Quentes): ${hotNumbers.join(', ')}
-- Números Menos Frequentes (Frios): ${coldNumbers.join(', ')}
-- Último Sorteio (o mais recente): ${analysisResult.lastDraws[0]?.draw.join(', ')}
+        Dados da Análise:
+        - Total de Sorteios Analisados: ${analysisResult.totalDraws}
+        - Números Mais Frequentes (Top 5): ${analysisResult.frequencies.slice(0, 5).map(f => `${f.number} (${f.count} vezes)`).join(', ')}
+        - Números Menos Frequentes (Top 5): ${analysisResult.frequencies.slice(-5).map(f => `${f.number} (${f.count} vezes)`).join(', ')}
+        - Pares de números que mais saíram juntos (Top 3): ${analysisResult.topPairs.slice(0, 3).map(p => `[${p.pair.join(', ')}] (${p.count} vezes)`).join('; ')}
+        - Distribuição de Pares/Ímpares mais comum: ${analysisResult.evenOddDistribution[0]?.distribution} (${analysisResult.evenOddDistribution[0]?.count} vezes)
+        - Sorteios Repetidos: ${analysisResult.repeatedDraws.length} sorteios se repetiram.
 
-Explique os conceitos de números quentes e frios, mas ALERTE o usuário sobre a "Falácia do Jogador", afirmando que resultados passados não influenciam resultados futuros em um jogo de puro acaso. Mantenha a análise concisa, informativa e neutra. Termine reforçando que a análise é puramente estatística e para fins de estudo, não uma previsão.`;
-
+        Seu Resumo:
+      `;
+      
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: prompt,
       });
 
-      setAiInsight(response.text);
+      setGeminiAnalysis(response.text);
 
-    } catch (e: any) {
-      setError('Falha ao obter insight da IA. Verifique sua conexão ou chave de API.');
-      console.error(e);
+    } catch(e: any) {
+        console.error("Gemini API error:", e);
+        setError("Não foi possível obter a análise do especialista. Verifique sua chave de API e a conexão.");
     } finally {
-      setIsAiLoading(false);
+        setIsGeminiLoading(false);
     }
-  }, [analysisResult, config.name]);
-  
-  const handleToggleHotSelection = (number: number) => {
-      setSelectedHotForCustom(prev => {
-        const isSelected = prev.includes(number);
-        if (isSelected) {
-          return prev.filter(n => n !== number);
-        } else if (prev.length < 2) {
-          return [...prev, number];
-        }
-        return prev;
-      });
-  };
-  
-  const handleToggleColdSelection = (number: number) => {
-      setSelectedColdForCustom(prev => {
-        const isSelected = prev.includes(number);
-        if (isSelected) {
-          return prev.filter(n => n !== number);
-        } else if (prev.length < 2) {
-          return [...prev, number];
-        }
-        return prev;
-      });
-  };
-  
-  const handleGenerateCustomGame = () => {
-    if (selectedHotForCustom.length !== 2 || selectedColdForCustom.length !== 2) return;
-    
-    const baseNumbers = [...selectedHotForCustom, ...selectedColdForCustom];
-    const remainingCount = config.betSize - baseNumbers.length;
-
-    if (remainingCount < 0) {
-        handleSelectSuggestion(pickRandomNumbers(baseNumbers, config.betSize), 'custom');
-        return;
-    }
-
-    const numberPool = Array.from({ length: config.totalNumbers }, (_, i) => i + 1)
-        .filter(n => !baseNumbers.includes(n));
-    
-    const randomFill = pickRandomNumbers(numberPool, remainingCount);
-    const finalGame = [...baseNumbers, ...randomFill].sort((a, b) => a - b);
-    
-    handleSelectSuggestion(finalGame, 'custom');
   };
 
-  const chartData = useMemo(() => {
-    if (!analysisResult?.frequencies) return [];
-    // Create a copy before sorting to avoid state mutation
-    return [...analysisResult.frequencies].sort((a, b) => a.number - b.number);
-  }, [analysisResult?.frequencies]);
+  const renderSuggestions = () => {
+    if (!suggestions) return null;
 
-  const renderNumberDetailsModal = () => {
-    if (selectedNumberDetails === null || !analysisResult) return null;
-
-    const contests = analysisResult.drawsByNumber.get(selectedNumberDetails) || [];
-    const frequency = analysisResult.frequencies.find(f => f.number === selectedNumberDetails);
+    const tabs: { key: SuggestionType, label: string }[] = [
+      { key: 'hot', label: 'Quentes' },
+      { key: 'cold', label: 'Frios' },
+      { key: 'mixed', label: 'Mistos' },
+    ];
+    
+    const currentSuggestion = suggestions[activeSuggestionTab] || [];
 
     return (
-        <div 
-            className="fixed inset-0 bg-black bg-opacity-75 flex justify-center items-center z-50 transition-opacity duration-300" 
-            onClick={() => setSelectedNumberDetails(null)}
-        >
-            <div 
-                className="bg-white dark:bg-slate-800 rounded-lg shadow-xl p-6 w-full max-w-md m-4 transform transition-all duration-300 scale-95 opacity-0 animate-fade-in-scale"
-                onClick={e => e.stopPropagation()}
-                style={{ animation: 'fade-in-scale 0.3s forwards' }}
+        <div className="mt-6">
+            <h3 className="text-xl font-bold text-slate-800 dark:text-slate-200 mb-4">Sugestões de Jogo</h3>
+             <div className="flex space-x-2 border-b border-slate-200 dark:border-slate-700 mb-4">
+                 {tabs.map(tab => (
+                     <button key={tab.key} onClick={() => setActiveSuggestionTab(tab.key)} className={`px-4 py-2 text-sm font-semibold border-b-2 transition-colors ${activeSuggestionTab === tab.key ? `border-blue-500 text-blue-600 dark:text-blue-400` : `border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300`}`}>
+                         {tab.label}
+                     </button>
+                 ))}
+             </div>
+             <div className="flex flex-wrap gap-2 mb-4">
+                 {currentSuggestion.map(num => <NumberBall key={num} number={num} color={config.color} />)}
+             </div>
+             <button
+                onClick={handleRegenerateSuggestions}
+                className="px-4 py-2 text-sm font-semibold rounded-md text-white transition-colors duration-200 shadow-md"
+                style={{ backgroundColor: config.color }}
             >
-                <div className="flex justify-between items-center mb-4 border-b border-slate-200 dark:border-slate-700 pb-3">
-                    <h3 className="text-xl font-bold text-slate-800 dark:text-slate-200">Detalhes do Número</h3>
-                    <button onClick={() => setSelectedNumberDetails(null)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors">
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                    </button>
-                </div>
-                <div className="flex items-center gap-4 mb-4">
-                    <NumberBall number={selectedNumberDetails} color={config.color} size="medium" />
-                    <div>
-                         <p className="text-slate-600 dark:text-slate-400">Sorteado</p>
-                         <p className="text-2xl font-bold text-slate-900 dark:text-white">{frequency?.count || 0} vezes</p>
-                    </div>
-                </div>
-                <div className="max-h-60 overflow-y-auto pr-2">
-                    <h4 className="font-semibold text-slate-700 dark:text-slate-300 mb-2">Sorteado nos concursos:</h4>
-                    {contests.length > 0 ? (
-                        <ul className="list-disc list-inside text-slate-600 dark:text-slate-400 space-y-1">
-                           {contests.map((c, i) => <li key={`${c}-${i}`}>{c}</li>)}
-                        </ul>
-                    ) : (
-                         <p className="text-slate-500 dark:text-slate-400 italic">Este número nunca foi sorteado.</p>
-                    )}
-                </div>
-            </div>
+                Gerar Nova Sugestão
+            </button>
         </div>
     );
   };
   
-  return (
-    <div className="p-4" style={{ color: config.color }}>
-       <div className="text-center mb-8">
-            <h2 className="text-3xl font-bold mb-2 text-slate-900 dark:text-white">{config.name}</h2>
-            <p className="text-slate-600 dark:text-slate-400">Faça o upload de um arquivo .csv ou .xlsx com os resultados para análise.</p>
-            <div className="mt-4 flex justify-center">
-                 <input
-                    type="file"
-                    ref={fileInputRef}
-                    onChange={handleFileChange}
-                    accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
-                    className="hidden"
-                    id={`file-upload-${config.key}`}
-                />
-                 <label 
-                    htmlFor={`file-upload-${config.key}`}
-                    className="inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-md text-white shadow-sm cursor-pointer hover:opacity-90 transition-opacity"
+  const renderAnalysis = () => {
+      if (!analysisResult) return null;
+      
+      const { fileName, totalDraws, frequencies, repeatedDraws, lastDraws, topPairs, evenOddDistribution } = analysisResult;
+
+      return (
+          <div>
+              <div className="mb-6 p-4 border-l-4 rounded-r-lg bg-slate-100 dark:bg-slate-700" style={{ borderColor: config.color }}>
+                  <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Análise de <span style={{ color: config.color }}>{config.name}</span></h2>
+                  <p className="text-sm text-slate-600 dark:text-slate-400">Arquivo: {fileName} | Total de Sorteios: {totalDraws}</p>
+              </div>
+
+              {/* Gemini Analysis Section */}
+              <div className="mb-8">
+                  <h3 className="text-xl font-bold text-slate-800 dark:text-slate-200 mb-2">Análise do Especialista (IA)</h3>
+                  <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">Clique no botão para obter um resumo dos dados gerado por inteligência artificial.</p>
+                  <button
+                    onClick={handleGeminiAnalysis}
+                    disabled={isGeminiLoading}
+                    className="inline-flex items-center px-4 py-2 text-sm font-semibold rounded-md text-white transition-colors duration-200 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{ backgroundColor: config.color }}
-                 >
-                    <FileUploadIcon />
-                    Selecionar Arquivo
-                </label>
-            </div>
-       </div>
+                   >
+                       {isGeminiLoading ? 'Analisando...' : 'Obter Análise da IA'}
+                   </button>
+                   {isGeminiLoading && <div className="mt-4 text-sm text-slate-500">Aguarde, a IA está processando os dados...</div>}
+                   {geminiAnalysis && (
+                       <div className="text-sm font-sans whitespace-pre-wrap mt-4 p-4 bg-slate-100 dark:bg-slate-900/50 rounded-lg">{geminiAnalysis}</div>
+                   )}
+              </div>
 
-      {isLoading && <LoadingSpinner />}
-      {error && <div className="text-center p-4 text-red-500 bg-red-100 dark:bg-red-900/50 rounded-lg">{error}</div>}
-
-      {analysisResult && (
-        <div className="animate-fade-in">
-             <div className="text-center mb-8 p-4 rounded-lg bg-slate-100 dark:bg-slate-800/50">
-                <p className="text-lg">Análise do arquivo <span className="font-bold">{analysisResult.fileName}</span> com <span className="font-bold">{analysisResult.totalDraws}</span> sorteios válidos.</p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-
-                {/* --- Suggestions & Selected Game --- */}
-                <div className="lg:col-span-2">
-                    {suggestions && (
-                       <Card title="Sugestões de Jogos" actions={
-                           <button onClick={handleRegenerateSuggestions} className="text-sm font-semibold p-2 rounded-md bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors">
-                            Gerar Novas
-                           </button>
-                       }>
-                            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-                                {(Object.keys(suggestions) as (keyof GameSuggestions)[]).map(key => {
-                                    const suggestionNumbers = suggestions[key];
-                                    if (!suggestionNumbers) return null;
-                                    const typeName = key === 'hot' ? 'Quente' : key === 'cold' ? 'Frio' : 'Misto';
-                                    const isSelected = selectedSuggestionType === key;
-                                    const type = key as SuggestionType;
-                                    return (
-                                        <div key={key} onClick={() => handleSelectSuggestion(suggestionNumbers, type)} className={`p-4 rounded-lg cursor-pointer border-2 transition-all ${isSelected ? 'shadow-lg' : 'border-transparent hover:bg-slate-100 dark:hover:bg-slate-900/50'}`} style={{ borderColor: isSelected ? config.color : 'transparent' }}>
-                                            <p className="font-bold mb-2">{typeName}</p>
-                                            <div className="flex flex-wrap gap-2">
-                                                {suggestionNumbers.map(n => <NumberBall key={n} number={n} color={config.color} size="small" />)}
-                                            </div>
-                                        </div>
-                                    )
-                                })}
+              <div className="space-y-8">
+                  {/* Frequency Analysis */}
+                  <div>
+                      <h3 className="text-xl font-bold text-slate-800 dark:text-slate-200 mb-4">Frequência dos Números</h3>
+                      <FrequencyChart data={frequencies} color={config.color} totalDraws={totalDraws} />
+                  </div>
+                  
+                  {/* Suggestions */}
+                  {renderSuggestions()}
+                  
+                  {/* Last Draws */}
+                   <div className="mt-6">
+                      <h3 className="text-xl font-bold text-slate-800 dark:text-slate-200 mb-4">Últimos {lastDraws.length} Sorteios</h3>
+                      <div className="space-y-3">
+                          {lastDraws.map(({contest, draw}) => (
+                              <div key={String(contest)} className="flex items-center justify-between p-2 rounded-lg bg-slate-100 dark:bg-slate-700/50">
+                                  <span className="font-mono text-sm text-slate-500 dark:text-slate-400">Concurso {contest}</span>
+                                  <div className="flex flex-wrap gap-1">
+                                      {draw.map(num => <NumberBall key={num} number={num} color={config.color} size="small"/>)}
+                                  </div>
+                              </div>
+                          ))}
+                      </div>
+                  </div>
+                  
+                  {/* Advanced Stats */}
+                   <div className="mt-6">
+                       <h3 className="text-xl font-bold text-slate-800 dark:text-slate-200 mb-4">Estatísticas Avançadas</h3>
+                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                           {/* Top Pairs */}
+                           <div className="p-4 rounded-lg bg-slate-100 dark:bg-slate-700/50">
+                               <h4 className="font-bold mb-2">Pares Mais Frequentes</h4>
+                               <ul className="space-y-2 text-sm">
+                                   {topPairs.map(({pair, count}) => (
+                                       <li key={pair.join('-')} className="flex justify-between">
+                                           <span>{pair.join(' & ')}</span>
+                                           <span className="font-semibold text-slate-600 dark:text-slate-300">{count} vezes</span>
+                                       </li>
+                                   ))}
+                               </ul>
                            </div>
-                       </Card>
-                    )}
-                    
-                    {selectedSuggestion && (
-                        <div className="mt-4 p-4 rounded-lg bg-slate-100 dark:bg-slate-900/50 animate-fade-in">
-                            <h4 className="font-bold mb-3 text-lg">Seu Jogo Selecionado: <span className="capitalize">{selectedSuggestionType === 'custom' ? 'Misto Personalizado' : selectedSuggestionType}</span></h4>
-                             <div className="flex flex-wrap gap-2 mb-4">
-                                {selectedSuggestion.map(n => <NumberBall key={n} number={n} color={config.color} />)}
-                            </div>
-                            <div className="flex gap-2">
-                                 <button onClick={handleCopyToClipboard} className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white focus:outline-none focus:ring-2 focus:ring-offset-2" style={{ backgroundColor: config.color }}>
-                                    <CopyIcon /> {copyStatus === 'copied' ? 'Copiado!' : 'Copiar'}
-                                </button>
-                                <button onClick={handleClearSelection} className="inline-flex items-center px-4 py-2 border border-slate-300 dark:border-slate-600 text-sm font-medium rounded-md shadow-sm text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600 focus:outline-none focus:ring-2 focus:ring-offset-2">
-                                    <ClearIcon /> Limpar
-                                </button>
-                            </div>
-                        </div>
-                    )}
-                </div>
+                           
+                           {/* Even/Odd */}
+                            <div className="p-4 rounded-lg bg-slate-100 dark:bg-slate-700/50">
+                               <h4 className="font-bold mb-2">Distribuição Pares/Ímpares</h4>
+                               <ul className="space-y-2 text-sm">
+                                   {evenOddDistribution.map(({distribution, count}) => (
+                                       <li key={distribution} className="flex justify-between">
+                                           <span>{distribution}</span>
+                                           <span className="font-semibold text-slate-600 dark:text-slate-300">{count} vezes</span>
+                                       </li>
+                                   ))}
+                               </ul>
+                           </div>
+                           
+                           {/* Repeated Draws */}
+                           {repeatedDraws.length > 0 && (
+                                <div className="md:col-span-2 p-4 rounded-lg bg-slate-100 dark:bg-slate-700/50">
+                                   <h4 className="font-bold mb-2">Sorteios Repetidos ({repeatedDraws.length})</h4>
+                                   <div className="text-sm max-h-40 overflow-y-auto">
+                                       {repeatedDraws.map(({draw, contests}) => (
+                                           <p key={draw.join('-')} className="mb-1">
+                                               <strong>{draw.join(', ')}</strong> - Concursos: {contests.join(', ')}
+                                           </p>
+                                       ))}
+                                   </div>
+                               </div>
+                           )}
 
-                 {/* --- Rules & Probabilities --- */}
-                <Card title="Regras e Probabilidades">
-                    <ul className="space-y-2 text-sm text-slate-600 dark:text-slate-400">
-                        <li><strong>Universo:</strong> {config.totalNumbers} números</li>
-                        <li><strong>Dezenas Sorteadas:</strong> {config.drawSize}</li>
-                        <li><strong>Aposta Padrão:</strong> {config.betSize} números</li>
-                        <li className="pt-2 border-t border-slate-200 dark:border-slate-700 mt-2">
-                            <strong>Probabilidades (Aposta Simples):</strong>
-                            <ul className="list-disc list-inside pl-2 mt-1 space-y-1">
-                                {config.probabilities.map(p => <li key={p.name}><strong>{p.name}:</strong> {p.chance}</li>)}
-                            </ul>
-                        </li>
-                    </ul>
-                </Card>
+                       </div>
+                   </div>
+              </div>
+          </div>
+      );
+  };
 
-                {/* --- AI Insight --- */}
-                <Card title="Análise com IA" actions={
-                     <button onClick={getAiInsight} disabled={isAiLoading} className="text-sm font-semibold p-2 rounded-md bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors disabled:opacity-50">
-                        {isAiLoading ? 'Analisando...' : 'Obter Insight'}
-                    </button>
-                }>
-                    {isAiLoading && <LoadingSpinner />}
-                    {aiInsight ? (
-                         <p className="text-sm text-slate-600 dark:text-slate-300 whitespace-pre-wrap">{aiInsight}</p>
-                    ) : (
-                        <p className="text-sm text-slate-500 dark:text-slate-400">Clique no botão para obter uma análise gerada por IA sobre os dados carregados.</p>
-                    )}
-                </Card>
 
-                 {/* --- Frequency Chart --- */}
-                <Card title="Frequência Geral" className="lg:col-span-2">
-                     <div style={{ width: '100%', height: 300 }}>
-                        <ResponsiveContainer>
-                            <BarChart data={chartData} onClick={handleNumberClick}>
-                                <XAxis dataKey="number" tick={{ fontSize: 12 }} />
-                                <YAxis tick={{ fontSize: 12 }} />
-                                <Tooltip cursor={{ fill: isDarkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }} contentStyle={{ backgroundColor: isDarkMode ? '#334155' : '#fff' }} />
-                                <Bar dataKey="count" name="Frequência" fill={config.color}>
-                                    {analysisResult.frequencies.map((entry, index) => (
-                                        <Cell key={`cell-${index}`} cursor="pointer"/>
-                                    ))}
-                                </Bar>
-                            </BarChart>
-                        </ResponsiveContainer>
-                    </div>
-                </Card>
+  return (
+    <div>
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileChange}
+        className="hidden"
+        accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
+      />
 
-                 {/* --- Hot & Cold Numbers --- */}
-                <Card title="Números Quentes e Frios">
-                    <div>
-                        <h4 className="font-semibold mb-2">Top {config.hotCount} Quentes (selecione 2)</h4>
-                         <div className="flex flex-wrap gap-2 mb-4">
-                            {analysisResult.frequencies.slice(0, config.hotCount).map(f => (
-                                <div key={f.number} className={`cursor-pointer rounded-full transition-all ${selectedHotForCustom.includes(f.number) ? `ring-2 ring-offset-2 dark:ring-offset-slate-800` : ''}`} style={{ '--tw-ring-color': selectedHotForCustom.includes(f.number) ? config.color : 'transparent' } as React.CSSProperties} onClick={() => handleToggleHotSelection(f.number)}>
-                                     <NumberBall number={f.number} color={config.color} size="small" />
-                                </div>
-                            ))}
-                        </div>
-                         <h4 className="font-semibold mb-2">Top {config.coldCount} Frios (selecione 2)</h4>
-                        <div className="flex flex-wrap gap-2">
-                             {analysisResult.frequencies.slice(-config.coldCount).map(f => (
-                                <div key={f.number} className={`cursor-pointer rounded-full transition-all ${selectedColdForCustom.includes(f.number) ? `ring-2 ring-offset-2 dark:ring-offset-slate-800` : ''}`} style={{ '--tw-ring-color': selectedColdForCustom.includes(f.number) ? config.color : 'transparent' } as React.CSSProperties} onClick={() => handleToggleColdSelection(f.number)}>
-                                    <NumberBall number={f.number} color="bg-slate-500 text-white" size="small" />
-                                 </div>
-                            ))}
-                        </div>
-                    </div>
-                </Card>
-                
-                 {/* --- Custom Mix Generator --- */}
-                <Card title="Gerador Misto Personalizado" className="lg:col-span-2">
-                    <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
-                        Selecione 2 números quentes e 2 frios na lista acima para gerar um jogo personalizado.
-                    </p>
-                    <div className="flex items-center gap-4">
-                        <div className="flex-1">
-                            <p className="font-semibold text-sm">Quentes selecionados:</p>
-                            <div className="flex flex-wrap gap-2 mt-1 h-10">
-                                {selectedHotForCustom.length > 0 ? selectedHotForCustom.map(n => <NumberBall key={n} number={n} color={config.color} size="small"/>) : <span className="text-sm text-slate-400 italic">Nenhum</span>}
-                            </div>
-                        </div>
-                         <div className="flex-1">
-                            <p className="font-semibold text-sm">Frios selecionados:</p>
-                            <div className="flex flex-wrap gap-2 mt-1 h-10">
-                                {selectedColdForCustom.length > 0 ? selectedColdForCustom.map(n => <NumberBall key={n} number={n} color="bg-slate-500 text-white" size="small"/>) : <span className="text-sm text-slate-400 italic">Nenhum</span>}
-                            </div>
-                        </div>
-                    </div>
-                    <div className="mt-4">
-                        <button
-                          onClick={handleGenerateCustomGame}
-                          disabled={selectedHotForCustom.length !== 2 || selectedColdForCustom.length !== 2}
-                          className="w-full px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                          style={{ backgroundColor: config.color }}
-                        >
-                            Gerar Jogo
-                        </button>
-                    </div>
-                </Card>
+      {isLoading && (
+        <div className="text-center p-10">
+          <div className="w-12 h-12 border-4 border-dashed rounded-full animate-spin mx-auto" style={{ borderColor: `${config.color} transparent` }}></div>
+          <p className="mt-4 font-semibold">Analisando dados...</p>
+        </div>
+      )}
 
-                {/* --- Top Pairs --- */}
-                <Card title="Pares Mais Frequentes">
-                     <ul className="space-y-3">
-                         {analysisResult.topPairs.map(({pair, count}) => (
-                            <li key={pair.join('-')} className="flex items-center justify-between text-sm">
-                                <div className="flex items-center gap-2">
-                                    <NumberBall number={pair[0]} color={config.color} size="small"/>
-                                    <NumberBall number={pair[1]} color={config.color} size="small"/>
-                                </div>
-                                <span className="font-semibold text-slate-500 dark:text-slate-400">{count} vezes</span>
-                            </li>
-                        ))}
-                    </ul>
-                </Card>
-
-                {/* --- Even/Odd --- */}
-                <Card title="Distribuição Pares/Ímpares (Top 5)">
-                     <ul className="space-y-3">
-                        {analysisResult.evenOddDistribution.slice(0, 5).map(({distribution, count}) => {
-                            const percentage = (count / analysisResult.totalDraws) * 100;
-                            return (
-                                <li key={distribution}>
-                                    <div className="flex justify-between items-center mb-1 text-sm font-semibold">
-                                        <span>{distribution}</span>
-                                        <span className="text-slate-500 dark:text-slate-400">{count} vezes</span>
-                                    </div>
-                                    <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2.5">
-                                        <div className="h-2.5 rounded-full" style={{ width: `${percentage}%`, backgroundColor: config.color }}></div>
-                                    </div>
-                                </li>
-                            );
-                        })}
-                    </ul>
-                </Card>
-
-                 {/* --- Last 10 Draws --- */}
-                <Card title="Últimos 10 Sorteios">
-                    <div className="space-y-3">
-                        {analysisResult.lastDraws.map(({contest, draw}) => (
-                             <div key={contest} className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
-                                 <p className="font-bold text-sm mb-2 sm:mb-0">Concurso: {contest}</p>
-                                <div className="flex flex-wrap gap-1">
-                                    {draw.map(n => <NumberBall key={n} number={n} color={config.color} size="small" />)}
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </Card>
-
-            </div>
+      {error && (
+        <div className="text-center p-10 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded-lg">
+          <h3 className="font-bold">Ocorreu um Erro</h3>
+          <p className="text-sm mt-2">{error}</p>
+           <button
+              onClick={handleFileUploadClick}
+              className="mt-4 px-4 py-2 text-sm font-semibold rounded-md text-white bg-red-600 hover:bg-red-700"
+            >
+             Tentar Novamente
+            </button>
         </div>
       )}
       
-      {renderNumberDetailsModal()}
+      {!isLoading && !analysisResult && !error && (
+        <div className="text-center py-12 px-6 border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-xl">
+            <div 
+              className="w-16 h-16 mx-auto rounded-full flex items-center justify-center mb-4"
+              style={{ backgroundColor: `${config.color}20` /* 20% opacity */ }}
+            >
+               <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" style={{ color: config.color }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+            </div>
+          <h2 className="text-xl font-bold text-slate-800 dark:text-slate-200">Comece sua Análise da {config.name}</h2>
+          <p className="text-slate-500 dark:text-slate-400 mt-2 mb-6 max-w-lg mx-auto">
+            Faça o upload do seu arquivo de resultados (.csv ou .xlsx) para gerar estatísticas, visualizar dados e obter sugestões.
+          </p>
+          <button
+            onClick={handleFileUploadClick}
+            className="px-6 py-3 font-semibold rounded-lg text-white shadow-lg transition-transform transform hover:scale-105"
+            style={{ backgroundColor: config.color }}
+          >
+            Selecionar Arquivo
+          </button>
+        </div>
+      )}
+
+      {!isLoading && analysisResult && renderAnalysis()}
+
     </div>
   );
 };
