@@ -1,0 +1,70 @@
+
+import type { LotteryConfig, LotteryKey } from './types';
+
+export const LOTTERY_CONFIGS: Record<LotteryKey, LotteryConfig> = {
+  megaSena: {
+    key: 'megaSena',
+    name: 'Mega-Sena',
+    color: '#209869',
+    totalNumbers: 60,
+    drawSize: 6,
+    betSize: 6,
+    hotCount: 10,
+    coldCount: 10,
+    probabilities: [
+      { name: 'Sena (6 acertos)', chance: '1 em 50.063.860' },
+      { name: 'Quina (5 acertos)', chance: '1 em 154.518' },
+      { name: 'Quadra (4 acertos)', chance: '1 em 2.332' },
+    ],
+  },
+  quina: {
+    key: 'quina',
+    name: 'Quina',
+    color: '#260085',
+    totalNumbers: 80,
+    drawSize: 5,
+    betSize: 5,
+    hotCount: 10,
+    coldCount: 10,
+    probabilities: [
+      { name: 'Quina (5 acertos)', chance: '1 em 24.040.016' },
+      { name: 'Quadra (4 acertos)', chance: '1 em 64.106' },
+      { name: 'Terno (3 acertos)', chance: '1 em 866' },
+      { name: 'Duque (2 acertos)', chance: '1 em 36' },
+    ],
+  },
+  lotofacil: {
+    key: 'lotofacil',
+    name: 'Lotofácil',
+    color: '#930089',
+    totalNumbers: 25,
+    drawSize: 15,
+    betSize: 15,
+    hotCount: 10,
+    coldCount: 5,
+    probabilities: [
+      { name: '15 acertos', chance: '1 em 3.268.760' },
+      { name: '14 acertos', chance: '1 em 21.791' },
+      { name: '13 acertos', chance: '1 em 691' },
+      { name: '12 acertos', chance: '1 em 59' },
+      { name: '11 acertos', chance: '1 em 11' },
+    ],
+  },
+  lotomania: {
+    key: 'lotomania',
+    name: 'Lotomania',
+    color: '#F78100',
+    totalNumbers: 100,
+    drawSize: 20,
+    betSize: 50,
+    hotCount: 10,
+    coldCount: 10,
+    probabilities: [
+      { name: '20 acertos', chance: '1 em 11.372.635' },
+      { name: '0 acertos', chance: '1 em 11.372.635' },
+      { name: '19 acertos', chance: '1 em 352.551' },
+      { name: '18 acertos', chance: '1 em 24.235' },
+      { name: '17 acertos', chance: '1 em 2.776' },
+    ],
+  },
+};

@@ -1,0 +1,5 @@
+{
+  "name": "Análise Matemática de Loterias",
+  "description": "Uma aplicação web para analisar dados históricos de loterias brasileiras (Mega-Sena, Quina, Lotofácil, Lotomania), identificar padrões de frequência e gerar sugestões de jogos baseadas em estatísticas.",
+  "requestFramePermissions": []
+}
