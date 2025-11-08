@@ -59,7 +59,7 @@ export interface NumberIntervalStats {
 }
 
 export interface AnalysisResult {
-  fileName: string;
+  fileNames: string[];
   totalDraws: number;
   allDraws: DrawData[];
   frequencies: Frequency[];

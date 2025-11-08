@@ -19,6 +19,8 @@ const HotIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5
 const ColdIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-blue-500" viewBox="0 0 20 20" fill="currentColor"><path d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" transform="rotate(45 10 10)" /></svg>;
 const CopyIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" /><path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2H6zM8 7a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" /></svg>;
 const CheckIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>;
+const DownloadIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 9.293a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" /></svg>;
+
 
 const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode }) => {
   const [originalResult, setOriginalResult] = useState<AnalysisResult | null>(null);
@@ -34,6 +36,8 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode })
   const [selectedNumber, setSelectedNumber] = useState<{ number: number; contests: (string | number)[] } | null>(null);
   
   const [isLastDrawsVisible, setIsLastDrawsVisible] = useState(false);
+  const [isRepeatedDrawsVisible, setIsRepeatedDrawsVisible] = useState(false);
+  const [lastDrawsSearchTerm, setLastDrawsSearchTerm] = useState('');
 
   const [selectedHot, setSelectedHot] = useState<number[]>([]);
   const [selectedCold, setSelectedCold] = useState<number[]>([]);
@@ -59,6 +63,8 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode })
     setSelectedSuggestionType(null);
     setSelectedNumber(null);
     setIsLastDrawsVisible(false);
+    setIsRepeatedDrawsVisible(false);
+    setLastDrawsSearchTerm('');
     setSelectedHot([]);
     setSelectedCold([]);
     setSortConfig({ key: 'number', direction: 'asc' });
@@ -69,15 +75,15 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode })
   }, [config]);
 
   const handleFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
 
     setIsLoading(true);
     setError(null);
     setAnalysisResult(null);
     
     try {
-      const result = await analyzeLotteryData(file, config);
+      const result = await analyzeLotteryData(Array.from(files), config);
       setOriginalResult(result);
       setAnalysisResult(result);
       setSuggestions(result.suggestions);
@@ -91,7 +97,7 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode })
       }
 
     } catch (e: any) {
-      setError(e.message || 'Ocorreu um erro ao analisar o arquivo.');
+      setError(e.message || 'Ocorreu um erro ao analisar os arquivos.');
     } finally {
       setIsLoading(false);
       if (fileInputRef.current) {
@@ -107,10 +113,9 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode })
   const handleFilterApply = () => {
       if (!originalResult || !startDate || !endDate) return;
 
-      const start = new Date(startDate);
-      start.setHours(0, 0, 0, 0); // Start of the day
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999); // End of the day
+      // This correctly interprets the date string in the user's local timezone
+      const start = new Date(startDate + 'T00:00:00');
+      const end = new Date(endDate + 'T23:59:59');
 
       const filteredDraws = originalResult.allDraws.filter(draw => {
           return draw.date >= start && draw.date <= end;
@@ -125,7 +130,7 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode })
       setError(null);
       const newProcessedData = processDraws(filteredDraws, config);
       const newResultState: AnalysisResult = {
-          fileName: originalResult.fileName,
+          fileNames: originalResult.fileNames,
           allDraws: originalResult.allDraws, // Keep the full list for re-filtering
           ...newProcessedData,
       };
@@ -188,17 +193,19 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode })
   }
 
   const handleCustomNumberSelect = (number: number, type: 'hot' | 'cold') => {
-    if (type === 'hot') {
-      setSelectedHot(prev => {
-        if (prev.includes(number)) return prev.filter(n => n !== number);
-        return prev.length < 2 ? [...prev, number] : prev;
-      });
-    } else {
-      setSelectedCold(prev => {
-        if (prev.includes(number)) return prev.filter(n => n !== number);
-        return prev.length < 2 ? [...prev, number] : prev;
-      });
-    }
+    const setter = type === 'hot' ? setSelectedHot : setSelectedCold;
+    
+    setter(prev => {
+      if (prev.includes(number)) {
+        return prev.filter(n => n !== number);
+      }
+      
+      const newSelection = [...prev, number];
+      if (newSelection.length > 2) {
+        newSelection.shift();
+      }
+      return newSelection;
+    });
   }
 
   const pickRandomNumbers = (numbers: number[], count: number): number[] => {
@@ -212,7 +219,6 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode })
     const baseNumbers = [...selectedHot, ...selectedCold];
     const remainingNumbers = config.betSize - baseNumbers.length;
     
-    // Create a pool of "neutral" numbers
     const hotNumbers = analysisResult.frequencies.slice(0, config.hotCount).map(f => f.number);
     const coldNumbers = analysisResult.frequencies.slice(-config.coldCount).map(f => f.number);
     const extremeNumbers = new Set([...hotNumbers, ...coldNumbers]);
@@ -257,6 +263,39 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode })
     return [...analysisResult.frequencies].sort((a, b) => a.number - b.number);
   }, [analysisResult]);
 
+  const formatGeminiResponse = (text: string) => {
+    if (!text) return '';
+    const lines = text.split('\n');
+    let html = '';
+    let inList = false;
+
+    const processLine = (line: string) => {
+      return line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    };
+
+    for (const line of lines) {
+        if (line.startsWith('* ')) {
+            if (!inList) {
+                html += '<ul>';
+                inList = true;
+            }
+            html += `<li>${processLine(line.substring(2))}</li>`;
+        } else {
+            if (inList) {
+                html += '</ul>';
+                inList = false;
+            }
+            if (line.trim()) {
+               html += `<p>${processLine(line)}</p>`;
+            }
+        }
+    }
+    if (inList) {
+        html += '</ul>';
+    }
+    return html;
+  };
+
   const handleGeminiAnalysis = async () => {
     if (!analysisResult || !suggestions) return;
     
@@ -268,29 +307,28 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode })
       const ai = new GoogleGenAI({apiKey: process.env.API_KEY});
 
       const prompt = `
-        Você é um especialista em análise de dados de loteria. Analise os seguintes dados para a ${config.name} e forneça um resumo perspicaz e fácil de entender para um leigo.
-        **NUNCA** sugira que resultados passados podem prever o futuro. Enfatize que isso é uma análise histórica e que a loteria é um jogo de azar. A probabilidade de qualquer combinação específica ser sorteada é exatamente a mesma.
-        Seja breve e direto. Use markdown para formatação (negrito, listas).
+        Você é um especialista em análise estatística de dados de loteria. Sua análise deve ser estritamente baseada nos dados históricos fornecidos, mantendo uma postura neutra e informativa.
 
-        **Dados da Análise:**
-        - Total de Sorteios Analisados: ${analysisResult.totalDraws}
-        - 5 Números Mais Frequentes: ${analysisResult.frequencies.slice(0, 5).map(f => `${String(f.number).padStart(2,'0')} (${f.count} vezes)`).join(', ')}
-        - 5 Números Menos Frequentes: ${analysisResult.frequencies.slice(-5).reverse().map(f => `${String(f.number).padStart(2,'0')} (${f.count} vezes)`).join(', ')}
-        - 3 Pares de números que mais saíram juntos: ${analysisResult.topPairs.slice(0, 3).map(p => `[${p.pair.join(', ')}] (${p.count} vezes)`).join('; ')}
-        - Distribuição de Pares/Ímpares mais comum: ${analysisResult.evenOddDistribution[0]?.distribution} (${analysisResult.evenOddDistribution[0]?.count} vezes)
-        - Sorteios Repetidos: ${analysisResult.repeatedDraws.length} sorteios se repetiram.
+        **Regra Fundamental:** Enfatize repetidamente que a loteria é um jogo de puro azar. Resultados passados não influenciam resultados futuros. A probabilidade de qualquer combinação de números ser sorteada é sempre a mesma em cada concurso. Use esta análise apenas como um estudo de curiosidades históricas.
 
-        **Sugestões de Jogos Geradas (baseadas em frequência histórica):**
-        - Sugestão "Quente": ${suggestions.hot.join(', ')} (baseada nos números mais frequentes)
-        - Sugestão "Fria": ${suggestions.cold.join(', ')} (baseada nos números menos frequentes)
-        - Sugestão "Mista": ${suggestions.mixed.join(', ')} (combinação de quentes e frios)
+        **Dados para Análise da ${config.name}:**
+        - **Período Analisado:** ${analysisResult.totalDraws} sorteios.
+        - **Números Mais Frequentes (Top 5):** ${analysisResult.frequencies.slice(0, 5).map(f => `${String(f.number).padStart(2, '0')} (${f.count}x)`).join(', ')}.
+        - **Números Menos Frequentes (Top 5):** ${analysisResult.frequencies.slice(-5).reverse().map(f => `${String(f.number).padStart(2, '0')} (${f.count}x)`).join(', ')}.
+        - **Pares Mais Comuns (Top 3):** ${analysisResult.topPairs.slice(0, 3).map(p => `[${p.pair.join(', ')}] (${p.count}x)`).join('; ')}.
+        - **Distribuição Par/Ímpar Mais Comum:** ${analysisResult.evenOddDistribution[0]?.distribution} (ocorreu ${analysisResult.evenOddDistribution[0]?.count} vezes).
 
-        **Sua Tarefa:**
-        1.  **Resumo Geral:** Forneça um resumo dos "Dados da Análise".
-        2.  **Análise das Sugestões:**
-            *   Analise cada uma das três sugestões de jogos (Quente, Fria, Mista). Comente sobre a composição de cada uma (ex: "formada por números que saíram muito no passado").
-            *   **Probabilidade Real:** Deixe claro que a probabilidade de QUALQUER uma dessas sugestões ser sorteada é de ${config.probabilities[0].chance}, a mesma para qualquer outra combinação.
-            *   **Análise Histórica (NÃO PREVISÃO):** Com base nos dados, comente sobre o desempenho histórico de estratégias similares. Por exemplo, com que frequência o sorteio continha majoritariamente números "quentes"? Descreva se, olhando para o passado, essa seria uma estratégia de sucesso "alto" ou "baixo", mas **SEMPRE** termine com a advertência de que isso não influencia o futuro.
+        **Sugestões de Jogos Geradas (Baseadas em Frequência Histórica):**
+        - **Jogo Quente:** ${suggestions.hot.join(', ')}
+        - **Jogo Frio:** ${suggestions.cold.join(', ')}
+        - **Jogo Misto:** ${suggestions.mixed.join(', ')}
+
+        **Sua Tarefa (use markdown para formatação):**
+        1.  **Resumo dos Dados:** Apresente os dados acima de forma clara e resumida. Destaque os números que mais e menos apareceram historicamente.
+        2.  **Análise das Sugestões Geradas:**
+            *   Explique a lógica por trás de cada sugestão (Jogo Quente = baseado nos mais frequentes, etc.).
+            *   **Importante:** Imediatamente após explicar as sugestões, reforce a regra fundamental. Afirme que a probabilidade de CADA UMA dessas sugestões ser sorteada é exatamente ${config.probabilities[0].chance}, a mesma de qualquer outra combinação possível.
+        3.  **Conclusão e Advertência:** Termine com uma advertência clara, reiterando que a análise é uma ferramenta de estudo sobre o comportamento passado dos números e não deve ser usada como um método de previsão. A sorte é o único fator determinante.
       `;
       
       const response = await ai.models.generateContent({
@@ -302,11 +340,53 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode })
 
     } catch(e: any) {
         console.error("Gemini API error:", e);
-        setError("Não foi possível obter a análise do especialista. Verifique a configuração e a conexão.");
+        setError("Erro ao se comunicar com a IA. A análise do especialista não pôde ser gerada. Por favor, tente novamente mais tarde.");
     } finally {
         setIsGeminiLoading(false);
     }
   };
+  
+  const exportDataToCSV = () => {
+    if (!analysisResult) return;
+
+    const { frequencies, intervalStats } = analysisResult;
+
+    // Combine frequency and interval data
+    const combinedData = Array.from({ length: config.totalNumbers }, (_, i) => {
+        const number = i + 1;
+        const freqData = frequencies.find(f => f.number === number);
+        const intervalData = intervalStats.find(is => is.number === number);
+        return {
+            numero: number,
+            frequencia: freqData?.count || 0,
+            atraso_atual: intervalData?.currentDelay ?? 'N/A',
+            intervalo_medio: intervalData?.avgInterval ?? 'N/A',
+            maior_atraso: intervalData?.maxDelay ?? 'N/A',
+        };
+    });
+
+    // Create CSV content
+    const header = "Numero,Frequencia,Atraso_Atual,Intervalo_Medio,Maior_Atraso\n";
+    const rows = combinedData.map(d =>
+        `${d.numero},${d.frequencia},${d.atraso_atual},${d.intervalo_medio},${d.maior_atraso}`
+    ).join('\n');
+
+    const csvContent = header + rows;
+
+    // Create a blob and trigger download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    if (link.download !== undefined) {
+        const url = URL.createObjectURL(blob);
+        link.setAttribute("href", url);
+        link.setAttribute("download", `analise_${config.key}.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+  };
+
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length && analysisResult) {
@@ -338,9 +418,26 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode })
   const renderAnalysis = () => {
       if (!analysisResult) return null;
       
-      const { fileName, totalDraws, frequencies, repeatedDraws, lastDraws, topPairs, evenOddDistribution } = analysisResult;
+      const { fileNames, totalDraws, frequencies, repeatedDraws, lastDraws, topPairs, evenOddDistribution } = analysisResult;
       const hotNumbers = frequencies.slice(0, config.hotCount);
       const coldNumbers = frequencies.slice(-config.coldCount).reverse();
+
+      const filteredLastDraws = lastDraws.filter(draw => {
+        if (!lastDrawsSearchTerm) return true; // Show all if search is empty
+        const searchTerm = lastDrawsSearchTerm.toLowerCase();
+        
+        const contestMatch = String(draw.contest).toLowerCase().includes(searchTerm);
+        
+        // Format date as dd/mm/yyyy for searching
+        const formattedDate = draw.date.toLocaleDateString('pt-BR', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric'
+        });
+        const dateMatch = formattedDate.includes(searchTerm);
+        
+        return contestMatch || dateMatch;
+      });
 
       return (
         <div className="animate-fade-in-scale">
@@ -386,13 +483,13 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode })
               <div className="flex flex-wrap justify-between items-center gap-4">
                 <div>
                   <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Análise de <span style={{ color: config.color }}>{config.name}</span></h2>
-                  <p className="text-sm text-slate-600 dark:text-slate-400">Arquivo: {fileName} | Sorteios no período: {totalDraws}</p>
+                  <p className="text-sm text-slate-600 dark:text-slate-400">Arquivos: {fileNames.join(', ')} | Sorteios no período: {totalDraws}</p>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap text-sm">
-                   <label htmlFor="start-date">De:</label>
-                   <input type="date" id="start-date" value={startDate} onChange={e => setStartDate(e.target.value)} className="p-1 border rounded bg-slate-200 dark:bg-slate-800 border-slate-300 dark:border-slate-600"/>
-                   <label htmlFor="end-date">Até:</label>
-                   <input type="date" id="end-date" value={endDate} onChange={e => setEndDate(e.target.value)} className="p-1 border rounded bg-slate-200 dark:bg-slate-800 border-slate-300 dark:border-slate-600"/>
+                   <label htmlFor="start-date" className="text-slate-600 dark:text-slate-400">De:</label>
+                   <input type="date" id="start-date" value={startDate} onChange={e => setStartDate(e.target.value)} className="p-1 border rounded bg-slate-200 dark:bg-slate-800 border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300"/>
+                   <label htmlFor="end-date" className="text-slate-600 dark:text-slate-400">Até:</label>
+                   <input type="date" id="end-date" value={endDate} onChange={e => setEndDate(e.target.value)} className="p-1 border rounded bg-slate-200 dark:bg-slate-800 border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300"/>
                    <button onClick={handleFilterApply} className="px-3 py-1 font-semibold rounded-md text-white" style={{ backgroundColor: config.color }}>Aplicar</button>
                    <button onClick={handleFilterClear} className="px-3 py-1 font-semibold rounded-md bg-slate-300 dark:bg-slate-600 text-slate-800 dark:text-slate-200">Limpar</button>
                 </div>
@@ -496,8 +593,8 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode })
                    )}
                    {geminiAnalysis && (
                        <div 
-                         className="prose prose-sm dark:prose-invert max-w-none mt-4 p-4 bg-white/50 dark:bg-slate-800/50 rounded-lg whitespace-pre-wrap"
-                         dangerouslySetInnerHTML={{ __html: geminiAnalysis.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\* (.*?)(?=\n\* |\n\n|$)/g, '<li>$1</li>').replace(/(\r\n|\n|\r)/gm,"<br>") }}
+                         className="prose prose-sm dark:prose-invert max-w-none mt-4 p-4 bg-white/50 dark:bg-slate-800/50 rounded-lg"
+                         dangerouslySetInnerHTML={{ __html: formatGeminiResponse(geminiAnalysis) }}
                         />
                    )}
               </div>
@@ -533,7 +630,7 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode })
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
                   <div>
-                    <h4 className="font-semibold text-center mb-2">Quentes (Selecione 2)</h4>
+                    <h4 className="font-semibold text-center mb-2 text-slate-800 dark:text-slate-300">Quentes (Selecione 2)</h4>
                     <div className="flex flex-wrap gap-2 justify-center">
                         {hotNumbers.map(({number}) => (
                             <button key={number} onClick={() => handleCustomNumberSelect(number, 'hot')} className={`w-10 h-10 rounded-full font-bold transition-all text-sm ${selectedHot.includes(number) ? 'ring-2 ring-offset-2 dark:ring-offset-slate-900' : ''}`} style={{ backgroundColor: config.color, color: 'white', '--tw-ring-color': config.color } as React.CSSProperties}>
@@ -543,7 +640,7 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode })
                     </div>
                   </div>
                    <div>
-                    <h4 className="font-semibold text-center mb-2">Frios (Selecione 2)</h4>
+                    <h4 className="font-semibold text-center mb-2 text-slate-800 dark:text-slate-300">Frios (Selecione 2)</h4>
                     <div className="flex flex-wrap gap-2 justify-center">
                         {coldNumbers.map(({number}) => (
                            <button key={number} onClick={() => handleCustomNumberSelect(number, 'cold')} className={`w-10 h-10 rounded-full font-bold transition-all text-sm bg-slate-400 dark:bg-slate-600 text-white ${selectedCold.includes(number) ? 'ring-2 ring-offset-2 dark:ring-offset-slate-900 ring-slate-500' : ''}`}>
@@ -567,7 +664,7 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode })
               <div className="bg-slate-100 dark:bg-slate-900/50 p-4 rounded-xl">
                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div>
-                      <h4 className="font-bold mb-3 text-slate-800 dark:text-slate-200 flex items-center gap-2"><HotIcon/> Números Quentes <span className="text-xs font-normal text-slate-500">(Top {config.hotCount})</span></h4>
+                      <h4 className="font-bold mb-3 text-slate-800 dark:text-slate-200 flex items-center gap-2"><HotIcon/> Números Quentes <span className="text-xs font-normal text-slate-500 dark:text-slate-400">(Top {config.hotCount})</span></h4>
                       <div className="flex flex-wrap gap-2">
                           {hotNumbers.map(({number, count}) => (
                               <div key={number} onClick={() => handleNumberClick(number)} className="cursor-pointer">
@@ -577,7 +674,7 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode })
                       </div>
                     </div>
                      <div>
-                      <h4 className="font-bold mb-3 text-slate-800 dark:text-slate-200 flex items-center gap-2"><ColdIcon/> Números Frios <span className="text-xs font-normal text-slate-500">(Top {config.coldCount})</span></h4>
+                      <h4 className="font-bold mb-3 text-slate-800 dark:text-slate-200 flex items-center gap-2"><ColdIcon/> Números Frios <span className="text-xs font-normal text-slate-500 dark:text-slate-400">(Top {config.coldCount})</span></h4>
                       <div className="flex flex-wrap gap-2">
                           {coldNumbers.map(({number, count}) => (
                              <div key={number} onClick={() => handleNumberClick(number)} className="cursor-pointer">
@@ -591,11 +688,21 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode })
               
                {/* Advanced Stats */}
                <div className="bg-slate-100 dark:bg-slate-900/50 p-4 rounded-xl">
-                 <h3 className="font-bold text-lg mb-3 text-slate-800 dark:text-slate-200">Estatísticas Avançadas</h3>
+                 <div className="flex justify-between items-center mb-3">
+                    <h3 className="font-bold text-lg text-slate-800 dark:text-slate-200">Estatísticas Avançadas</h3>
+                    <button
+                        onClick={exportDataToCSV}
+                        className="flex items-center px-3 py-1 text-xs font-semibold rounded-full text-white transition-colors duration-200 shadow-sm"
+                        style={{ backgroundColor: config.color }}
+                    >
+                       <DownloadIcon />
+                       Exportar Dados (CSV)
+                    </button>
+                 </div>
                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                      {/* Top Pairs */}
                      <div>
-                         <h4 className="font-bold mb-2">Pares Mais Frequentes (Top 10)</h4>
+                         <h4 className="font-bold mb-2 text-slate-800 dark:text-slate-300">Pares Mais Frequentes (Top 10)</h4>
                          <div className="space-y-2 text-sm">
                              {topPairs.map(({pair, count}) => (
                                  <div key={pair.join('-')} className="flex items-center justify-between text-slate-600 dark:text-slate-400">
@@ -611,7 +718,7 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode })
                      
                      {/* Even/Odd */}
                       <div>
-                         <h4 className="font-bold mb-2">Distribuição Pares/Ímpares (Top 5)</h4>
+                         <h4 className="font-bold mb-2 text-slate-800 dark:text-slate-300">Distribuição Pares/Ímpares (Top 5)</h4>
                          <div className="space-y-3 text-sm text-slate-600 dark:text-slate-400">
                              {evenOddDistribution.slice(0, 5).map(({distribution, count}) => (
                                  <div key={distribution}>
@@ -626,22 +733,37 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode })
                              ))}
                          </div>
                      </div>
-                     
-                     {/* Repeated Draws */}
-                     {repeatedDraws.length > 0 && (
-                          <div className="md:col-span-2">
-                             <h4 className="font-bold mb-2">Sorteios Repetidos ({repeatedDraws.length})</h4>
-                             <div className="text-sm max-h-32 overflow-y-auto p-2 bg-slate-200/50 dark:bg-slate-800/50 rounded-md text-slate-600 dark:text-slate-400">
-                                 {repeatedDraws.map(({draw, contests}) => (
-                                     <p key={draw.join('-')} className="mb-1">
-                                         <strong>{draw.join(', ')}</strong> - nos concursos: {contests.join(', ')}
-                                     </p>
-                                 ))}
-                             </div>
-                         </div>
-                     )}
                  </div>
                </div>
+               
+                {/* Repeated Draws */}
+                {repeatedDraws.length > 0 && (
+                    <div className="bg-slate-100 dark:bg-slate-900/50 rounded-xl">
+                        <button
+                          onClick={() => setIsRepeatedDrawsVisible(!isRepeatedDrawsVisible)}
+                          className="w-full p-4 text-left font-bold text-lg text-slate-800 dark:text-slate-200 flex justify-between items-center"
+                        >
+                          <span>Sorteios Repetidos ({repeatedDraws.length})</span>
+                          <svg xmlns="http://www.w3.org/2000/svg" className={`h-5 w-5 transition-transform ${isRepeatedDrawsVisible ? 'rotate-180' : ''}`} viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" /></svg>
+                        </button>
+                        {isRepeatedDrawsVisible && (
+                            <div className="p-4 pt-0 space-y-4 animate-fade-in-scale">
+                                {repeatedDraws.map(({draw, contests}) => (
+                                    <div key={draw.join('-')} className="p-3 rounded-lg bg-slate-200/50 dark:bg-slate-800/50">
+                                        <div className="flex flex-wrap gap-1 mb-2">
+                                            {draw.map(num => <NumberBall key={num} number={num} color={config.color} size="small"/>)}
+                                        </div>
+                                        <p className="text-sm text-slate-600 dark:text-slate-400">
+                                            <span className="font-semibold">Concursos:</span>
+                                            <span className="font-mono ml-2">{contests.join(', ')}</span>
+                                        </p>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+
 
                 {/* Interval Analysis */}
                 <div className="bg-slate-100 dark:bg-slate-900/50 p-4 rounded-xl">
@@ -687,16 +809,33 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode })
                   <svg xmlns="http://www.w3.org/2000/svg" className={`h-5 w-5 transition-transform ${isLastDrawsVisible ? 'rotate-180' : ''}`} viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" /></svg>
                 </button>
                 {isLastDrawsVisible && (
-                  <div className="p-4 pt-0 space-y-3 animate-fade-in-scale">
-                      {lastDraws.map(({contest, draw}) => (
-                          <div key={String(contest)} className="flex items-center justify-between p-2 rounded-lg bg-slate-200/50 dark:bg-slate-800/50">
-                              <span className="font-mono text-sm text-slate-500 dark:text-slate-400">Concurso {contest}</span>
-                              <div className="flex flex-wrap gap-1">
-                                  {draw.map(num => <NumberBall key={num} number={num} color={config.color} size="small"/>)}
-                              </div>
-                          </div>
-                      ))}
-                  </div>
+                    <div className="p-4 pt-0 animate-fade-in-scale">
+                        <input
+                            type="text"
+                            placeholder="Buscar por concurso ou data (dd/mm/aaaa)..."
+                            value={lastDrawsSearchTerm}
+                            onChange={(e) => setLastDrawsSearchTerm(e.target.value)}
+                            className="w-full p-2 mb-3 bg-slate-200 dark:bg-slate-700 rounded-md border border-slate-300 dark:border-slate-600 focus:ring-2 focus:outline-none text-slate-700 dark:text-slate-300"
+                            style={{ '--tw-ring-color': config.color } as React.CSSProperties}
+                        />
+                        <div className="space-y-3">
+                            {filteredLastDraws.length > 0 ? (
+                                filteredLastDraws.map(({ contest, draw, date }) => (
+                                <div key={String(contest)} className="p-2 rounded-lg bg-slate-200/50 dark:bg-slate-800/50">
+                                    <div className="flex items-center justify-between mb-2">
+                                        <span className="font-mono text-sm text-slate-500 dark:text-slate-400">Concurso {contest}</span>
+                                        <span className="font-sans text-xs text-slate-500 dark:text-slate-400">{date.toLocaleDateString('pt-BR')}</span>
+                                    </div>
+                                    <div className="flex flex-wrap gap-1">
+                                        {draw.map(num => <NumberBall key={num} number={num} color={config.color} size="small"/>)}
+                                    </div>
+                                </div>
+                                ))
+                            ) : (
+                                <p className="text-center text-slate-500 dark:text-slate-400 py-4">Nenhum sorteio encontrado para a busca.</p>
+                            )}
+                        </div>
+                    </div>
                 )}
               </div>
             </div>
@@ -714,6 +853,7 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode })
         onChange={handleFileChange}
         className="hidden"
         accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
+        multiple
       />
 
       {isLoading && (
@@ -731,7 +871,7 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode })
               onClick={handleFileUploadClick}
               className="mt-4 px-4 py-2 text-sm font-semibold rounded-md text-white bg-red-600 hover:bg-red-700"
             >
-             Selecionar Outro Arquivo
+             Selecionar Outros Arquivos
             </button>
         </div>
       )}
@@ -748,14 +888,14 @@ const LotteryAnalysis: React.FC<LotteryAnalysisProps> = ({ config, isDarkMode })
             </div>
           <h2 className="text-xl font-bold text-slate-800 dark:text-slate-200">Comece sua Análise da {config.name}</h2>
           <p className="text-slate-500 dark:text-slate-400 mt-2 mb-6 max-w-lg mx-auto">
-            Faça o upload do seu arquivo de resultados (.csv ou .xlsx) para gerar estatísticas e visualizar os dados.
+            Faça o upload de um ou mais arquivos de resultados (.csv ou .xlsx) para consolidar os dados, gerar estatísticas e visualizar as informações.
           </p>
           <button
             onClick={handleFileUploadClick}
             className="px-6 py-3 font-semibold rounded-lg text-white shadow-lg transition-transform transform hover:scale-105"
             style={{ backgroundColor: config.color }}
           >
-            Selecionar Arquivo
+            Selecionar Arquivos
           </button>
         </div>
       )}

@@ -120,7 +120,7 @@ export const regenerateSuggestions = (frequencies: Frequency[], config: LotteryC
  * @param config The configuration for the current lottery.
  * @returns An object containing all calculated analysis data.
  */
-export const processDraws = (allDraws: DrawData[], config: LotteryConfig): Omit<AnalysisResult, 'fileName' | 'allDraws'> => {
+export const processDraws = (allDraws: DrawData[], config: LotteryConfig): Omit<AnalysisResult, 'fileNames' | 'allDraws'> => {
     const frequencyMap = new Map<number, number>();
     const drawsByNumber = new Map<number, (string | number)[]>();
     const drawStrings = new Map<string, (string | number)[]>();
@@ -233,28 +233,25 @@ export const processDraws = (allDraws: DrawData[], config: LotteryConfig): Omit<
 
 
 /**
- * Analyzes lottery data from a user-provided file.
- * @param file The CSV or XLSX file containing lottery results.
- * @param config The configuration for the specific lottery being analyzed.
- * @returns A promise that resolves to an AnalysisResult object.
+ * Parses raw row-based data from a file into structured DrawData objects.
+ * @param rawData Array of arrays representing rows and cells from a file.
+ * @param config The configuration for the specific lottery.
+ * @returns An array of DrawData objects.
  */
-export const analyzeLotteryData = async (file: File, config: LotteryConfig): Promise<AnalysisResult> => {
-    
-    const rawData = await readFileData(file);
-
+const parseRawDataToDraws = (rawData: (string | number)[][], config: LotteryConfig): DrawData[] => {
     if (rawData.length === 0) {
-        throw new Error('Arquivo vazio ou com formato inválido.');
+        return [];
     }
 
-    // --- NEW ROBUST HEADER/DATA DETECTION ---
+    // --- ROBUST HEADER/DATA DETECTION ---
     let headerRowIndex = -1;
     let contestIndex = -1;
     let dateIndex = -1;
-    let drawIndices: number[] | null = null; // Use null to indicate "scan the whole row" mode
+    let drawIndices: number[] | null = null;
 
     const drawColumnRegex = /(bola|dezena|d)\s*_?\d+/i;
     const contestColumnRegex = /concurso/i;
-    const dateColumnRegex = /data/i; // "data" is Portuguese for date
+    const dateColumnRegex = /data/i;
 
     // Strategy 1: Find a perfect header with "Concurso", "Data" and "Bola/Dezena" columns.
     for (let i = 0; i < Math.min(rawData.length, 10); i++) {
@@ -269,7 +266,7 @@ export const analyzeLotteryData = async (file: File, config: LotteryConfig): Pro
             headerRowIndex = i;
             contestIndex = potentialContestIndex;
             dateIndex = potentialDateIndex;
-            drawIndices = potentialDrawIndices.slice(0, config.drawSize); // Use specific columns
+            drawIndices = potentialDrawIndices.slice(0, config.drawSize);
             break;
         }
     }
@@ -292,7 +289,7 @@ export const analyzeLotteryData = async (file: File, config: LotteryConfig): Pro
                         headerRowIndex = i;
                         contestIndex = potentialContestIndex;
                         dateIndex = potentialDateIndex;
-                        drawIndices = null; // Set to null to signal "scan the whole row"
+                        drawIndices = null;
                         break;
                     }
                 }
@@ -334,18 +331,49 @@ export const analyzeLotteryData = async (file: File, config: LotteryConfig): Pro
             d.date instanceof Date
         );
 
-    if (allDraws.length === 0) {
-        throw new Error(`Nenhum sorteio válido encontrado. Verifique se o arquivo contém linhas com data válida e ${config.drawSize} números válidos entre 1 e ${config.totalNumbers}.`);
+    return allDraws;
+};
+
+
+/**
+ * Analyzes lottery data from one or more user-provided files, consolidating the results.
+ * @param files An array of CSV or XLSX files containing lottery results.
+ * @param config The configuration for the specific lottery being analyzed.
+ * @returns A promise that resolves to a consolidated AnalysisResult object.
+ */
+export const analyzeLotteryData = async (files: File[], config: LotteryConfig): Promise<AnalysisResult> => {
+    
+    const allDrawsMap = new Map<string | number, DrawData>();
+    const fileNames: string[] = [];
+
+    for (const file of files) {
+        try {
+            fileNames.push(file.name);
+            const rawData = await readFileData(file);
+            const drawsFromFile = parseRawDataToDraws(rawData, config);
+            
+            for (const draw of drawsFromFile) {
+                allDrawsMap.set(draw.contest, draw); // Deduplicates based on contest number
+            }
+        } catch (e: any) {
+             throw new Error(`Erro ao processar o arquivo "${file.name}": ${e.message}`);
+        }
     }
 
-    // Ensure draws are sorted newest to oldest for consistent interval analysis
-    allDraws.sort((a, b) => b.date.getTime() - a.date.getTime());
+    if (allDrawsMap.size === 0) {
+        throw new Error(`Nenhum sorteio válido encontrado nos arquivos fornecidos. Verifique se os arquivos contêm linhas com data válida e ${config.drawSize} números válidos entre 1 e ${config.totalNumbers}.`);
+    }
 
-    const processedData = processDraws(allDraws, config);
+    const consolidatedDraws = Array.from(allDrawsMap.values());
+
+    // Ensure draws are sorted newest to oldest for consistent interval analysis
+    consolidatedDraws.sort((a, b) => b.date.getTime() - a.date.getTime());
+
+    const processedData = processDraws(consolidatedDraws, config);
     
     return {
-        fileName: file.name,
-        allDraws,
+        fileNames,
+        allDraws: consolidatedDraws,
         ...processedData,
     };
 };
