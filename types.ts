@@ -1,4 +1,5 @@
-export type LotteryKey = 'megaSena' | 'quina' | 'lotofacil' | 'lotomania';
+
+export type LotteryKey = 'megaSena' | 'quina' | 'lotofacil' | 'lotomania' | 'timemania' | 'duplaSena' | 'diaDeSorte';
 
 export type SuggestionType = 'hot' | 'cold' | 'mixed' | 'custom';
 
@@ -39,6 +40,9 @@ export interface DrawData {
     contest: string | number;
     draw: number[];
     date: Date;
+    city?: string;
+    state?: string;
+    betType?: string;
 }
 
 export interface PairFrequency {
@@ -58,6 +62,11 @@ export interface NumberIntervalStats {
     maxDelay: number;
 }
 
+export interface ConsecutiveSequence {
+  sequence: number[];
+  count: number;
+}
+
 export interface AnalysisResult {
   fileNames: string[];
   totalDraws: number;
@@ -70,4 +79,5 @@ export interface AnalysisResult {
   topPairs: PairFrequency[];
   evenOddDistribution: EvenOddDistribution[];
   intervalStats: NumberIntervalStats[];
+  consecutiveSequences: ConsecutiveSequence[];
 }

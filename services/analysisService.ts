@@ -1,5 +1,6 @@
+
 import * as XLSX from 'xlsx';
-import type { LotteryConfig, AnalysisResult, Frequency, GameSuggestions, DrawData, RepeatedDraw, PairFrequency, EvenOddDistribution, NumberIntervalStats } from '../types';
+import type { LotteryConfig, AnalysisResult, Frequency, GameSuggestions, DrawData, RepeatedDraw, PairFrequency, EvenOddDistribution, NumberIntervalStats, ConsecutiveSequence } from '../types';
 
 /**
  * Parses a date string (e.g., dd/mm/yyyy) into a Date object.
@@ -126,6 +127,7 @@ export const processDraws = (allDraws: DrawData[], config: LotteryConfig): Omit<
     const drawStrings = new Map<string, (string | number)[]>();
     const pairFrequencyMap = new Map<string, number>();
     const evenOddDistributionMap = new Map<string, number>();
+    const sequenceFrequencyMap = new Map<string, number>();
     const lastSeen = new Map<number, number>(); // contest index
     const intervals = new Map<number, number[]>();
 
@@ -168,6 +170,21 @@ export const processDraws = (allDraws: DrawData[], config: LotteryConfig): Omit<
         const odds = draw.length - evens;
         const evenOddKey = `${evens} Pares / ${odds} Ímpares`;
         evenOddDistributionMap.set(evenOddKey, (evenOddDistributionMap.get(evenOddKey) || 0) + 1);
+        
+        // Consecutive sequence analysis
+        for (let i = 0; i < draw.length - 1; i++) {
+            let currentSequence = [draw[i]];
+            let j = i;
+            while (j < draw.length - 1 && draw[j + 1] === draw[j] + 1) {
+                currentSequence.push(draw[j + 1]);
+                j++;
+            }
+            if (currentSequence.length > 1) {
+                const key = currentSequence.join('-');
+                sequenceFrequencyMap.set(key, (sequenceFrequencyMap.get(key) || 0) + 1);
+                i = j - 1; // Move index past the current sequence
+            }
+        }
     });
 
     const intervalStats: NumberIntervalStats[] = [];
@@ -213,6 +230,10 @@ export const processDraws = (allDraws: DrawData[], config: LotteryConfig): Omit<
     const evenOddDistribution: EvenOddDistribution[] = Array.from(evenOddDistributionMap.entries())
         .map(([distribution, count]) => ({ distribution, count }))
         .sort((a, b) => b.count - a.count);
+        
+    const consecutiveSequences: ConsecutiveSequence[] = Array.from(sequenceFrequencyMap.entries())
+        .map(([key, count]) => ({ sequence: key.split('-').map(Number), count }))
+        .sort((a, b) => b.count - a.count || b.sequence.length - a.sequence.length);
 
     const suggestions = regenerateSuggestions(frequencies, config);
     
@@ -228,6 +249,7 @@ export const processDraws = (allDraws: DrawData[], config: LotteryConfig): Omit<
         topPairs,
         evenOddDistribution,
         intervalStats,
+        consecutiveSequences,
     };
 }
 
@@ -247,17 +269,27 @@ const parseRawDataToDraws = (rawData: (string | number)[][], config: LotteryConf
     let headerRowIndex = -1;
     let contestIndex = -1;
     let dateIndex = -1;
+    let cityIndex = -1;
+    let stateIndex = -1;
+    let betTypeIndex = -1;
     let drawIndices: number[] | null = null;
 
     const drawColumnRegex = /(bola|dezena|d)\s*_?\d+/i;
     const contestColumnRegex = /concurso/i;
     const dateColumnRegex = /data/i;
+    const cityColumnRegex = /cidade|munic[ií]pio/i;
+    const stateColumnRegex = /uf|estado/i;
+    const betTypeColumnRegex = /tipo|modalidade|ganhadores/i; 
 
     // Strategy 1: Find a perfect header with "Concurso", "Data" and "Bola/Dezena" columns.
     for (let i = 0; i < Math.min(rawData.length, 10); i++) {
         const row = rawData[i].map(cell => String(cell).toLowerCase());
         const potentialContestIndex = row.findIndex(h => contestColumnRegex.test(h));
         const potentialDateIndex = row.findIndex(h => dateColumnRegex.test(h));
+        const potentialCityIndex = row.findIndex(h => cityColumnRegex.test(h));
+        const potentialStateIndex = row.findIndex(h => stateColumnRegex.test(h));
+        const potentialBetTypeIndex = row.findIndex(h => betTypeColumnRegex.test(h));
+        
         const potentialDrawIndices = row
             .map((h, idx) => drawColumnRegex.test(h) ? idx : -1)
             .filter(idx => idx !== -1);
@@ -266,6 +298,9 @@ const parseRawDataToDraws = (rawData: (string | number)[][], config: LotteryConf
             headerRowIndex = i;
             contestIndex = potentialContestIndex;
             dateIndex = potentialDateIndex;
+            cityIndex = potentialCityIndex;
+            stateIndex = potentialStateIndex;
+            betTypeIndex = potentialBetTypeIndex;
             drawIndices = potentialDrawIndices.slice(0, config.drawSize);
             break;
         }
@@ -277,6 +312,10 @@ const parseRawDataToDraws = (rawData: (string | number)[][], config: LotteryConf
             const row = rawData[i].map(cell => String(cell).toLowerCase());
             const potentialContestIndex = row.findIndex(h => contestColumnRegex.test(h));
             const potentialDateIndex = row.findIndex(h => dateColumnRegex.test(h));
+            // Try to find extra info even in Strategy 2
+            const potentialCityIndex = row.findIndex(h => cityColumnRegex.test(h));
+            const potentialStateIndex = row.findIndex(h => stateColumnRegex.test(h));
+            const potentialBetTypeIndex = row.findIndex(h => betTypeColumnRegex.test(h));
 
             if (potentialContestIndex !== -1 && potentialDateIndex !== -1) {
                 const nextRow = rawData[i + 1];
@@ -289,6 +328,9 @@ const parseRawDataToDraws = (rawData: (string | number)[][], config: LotteryConf
                         headerRowIndex = i;
                         contestIndex = potentialContestIndex;
                         dateIndex = potentialDateIndex;
+                        cityIndex = potentialCityIndex;
+                        stateIndex = potentialStateIndex;
+                        betTypeIndex = potentialBetTypeIndex;
                         drawIndices = null;
                         break;
                     }
@@ -307,6 +349,10 @@ const parseRawDataToDraws = (rawData: (string | number)[][], config: LotteryConf
         .map(row => {
             const contest = row[contestIndex];
             const date = parseDate(row[dateIndex]);
+            const city = cityIndex !== -1 ? String(row[cityIndex]) : undefined;
+            const state = stateIndex !== -1 ? String(row[stateIndex]) : undefined;
+            const betType = betTypeIndex !== -1 ? String(row[betTypeIndex]) : undefined;
+
             let draw: number[];
 
             if (drawIndices) {
@@ -323,9 +369,9 @@ const parseRawDataToDraws = (rawData: (string | number)[][], config: LotteryConf
                 )).sort((a, b) => a - b);
             }
 
-            return { contest, draw, date };
+            return { contest, draw, date, city, state, betType };
         })
-        .filter((d): d is DrawData => 
+        .filter((d: any): d is DrawData => 
             d.draw.length === config.drawSize && 
             d.contest !== '' && d.contest !== undefined &&
             d.date instanceof Date

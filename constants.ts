@@ -67,4 +67,53 @@ export const LOTTERY_CONFIGS: Record<LotteryKey, LotteryConfig> = {
       { name: '17 acertos', chance: '1 em 2.776' },
     ],
   },
+  timemania: {
+    key: 'timemania',
+    name: 'Timemania',
+    color: '#FFCC00',
+    totalNumbers: 80,
+    drawSize: 7,
+    betSize: 10,
+    hotCount: 10,
+    coldCount: 10,
+    probabilities: [
+        { name: '7 acertos', chance: '1 em 26.472.637' },
+        { name: '6 acertos', chance: '1 em 216.103' },
+        { name: '5 acertos', chance: '1 em 5.220' },
+        { name: '4 acertos', chance: '1 em 276' },
+        { name: '3 acertos', chance: '1 em 29' },
+    ]
+  },
+  duplaSena: {
+    key: 'duplaSena',
+    name: 'Dupla Sena',
+    color: '#A30A00',
+    totalNumbers: 50,
+    drawSize: 6,
+    betSize: 6,
+    hotCount: 10,
+    coldCount: 10,
+    probabilities: [
+        { name: 'Sena (6 acertos)', chance: '1 em 15.890.700' },
+        { name: 'Quina (5 acertos)', chance: '1 em 60.192' },
+        { name: 'Quadra (4 acertos)', chance: '1 em 1.120' },
+        { name: 'Terno (3 acertos)', chance: '1 em 60' },
+    ]
+  },
+  diaDeSorte: {
+    key: 'diaDeSorte',
+    name: 'Dia de Sorte',
+    color: '#CB852B',
+    totalNumbers: 31,
+    drawSize: 7,
+    betSize: 7,
+    hotCount: 7,
+    coldCount: 5,
+    probabilities: [
+        { name: '7 acertos', chance: '1 em 2.629.575' },
+        { name: '6 acertos', chance: '1 em 15.652' },
+        { name: '5 acertos', chance: '1 em 453' },
+        { name: '4 acertos', chance: '1 em 37' },
+    ]
+  }
 };

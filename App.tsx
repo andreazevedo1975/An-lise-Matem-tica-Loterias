@@ -3,19 +3,39 @@ import React, { useState, useEffect } from 'react';
 import { LOTTERY_CONFIGS } from './constants';
 import type { LotteryConfig, LotteryKey } from './types';
 import LotteryAnalysis from './components/LotteryAnalysis';
+import LotteryComparison from './components/LotteryComparison';
 import DarkModeToggle from './components/DarkModeToggle';
-import { MegaSenaIcon, QuinaIcon, LotofacilIcon, LotomaniaIcon } from './components/LotteryIcons';
+import { MegaSenaIcon, QuinaIcon, LotofacilIcon, LotomaniaIcon, TimemaniaIcon, DuplaSenaIcon, DiaDeSorteIcon } from './components/LotteryIcons';
 
 const iconMap: Record<LotteryKey, React.FC<{ className?: string }>> = {
   megaSena: MegaSenaIcon,
   quina: QuinaIcon,
   lotofacil: LotofacilIcon,
   lotomania: LotomaniaIcon,
+  timemania: TimemaniaIcon,
+  duplaSena: DuplaSenaIcon,
+  diaDeSorte: DiaDeSorteIcon,
 };
 
+// Add a special key for comparison view
+type ViewMode = LotteryKey | 'comparison';
+
 const App: React.FC = () => {
-  const [activeLottery, setActiveLottery] = useState<LotteryKey>('megaSena');
-  const [isDarkMode, setIsDarkMode] = useState(true);
+  const [activeLottery, setActiveLottery] = useState<ViewMode>(() => {
+    const saved = localStorage.getItem('activeLottery');
+    return (saved && (Object.keys(LOTTERY_CONFIGS).includes(saved) || saved === 'comparison'))
+      ? saved as ViewMode 
+      : 'megaSena';
+  });
+
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+    const saved = localStorage.getItem('isDarkMode');
+    return saved !== null ? saved === 'true' : true; // Default to dark if nothing is saved
+  });
+
+  useEffect(() => {
+    localStorage.setItem('activeLottery', activeLottery);
+  }, [activeLottery]);
 
   useEffect(() => {
     if (isDarkMode) {
@@ -23,6 +43,7 @@ const App: React.FC = () => {
     } else {
       document.documentElement.classList.remove('dark');
     }
+    localStorage.setItem('isDarkMode', String(isDarkMode));
   }, [isDarkMode]);
 
   const toggleDarkMode = () => {
@@ -30,7 +51,7 @@ const App: React.FC = () => {
   };
 
   const renderTabs = () => {
-    return (Object.keys(LOTTERY_CONFIGS) as LotteryKey[]).map((key) => {
+    const buttons = (Object.keys(LOTTERY_CONFIGS) as LotteryKey[]).map((key) => {
       const config = LOTTERY_CONFIGS[key];
       const isActive = activeLottery === key;
       const Icon = iconMap[key];
@@ -50,6 +71,26 @@ const App: React.FC = () => {
         </button>
       );
     });
+
+    // Add Comparison Tab
+    buttons.push(
+      <button
+        key="comparison"
+        onClick={() => setActiveLottery('comparison')}
+        className={`inline-flex items-center justify-center px-4 py-2 text-sm font-semibold rounded-md transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-50 dark:focus:ring-offset-slate-900 ${
+          activeLottery === 'comparison'
+            ? 'bg-indigo-600 text-white shadow-lg'
+            : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-600'
+        }`}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+            <path d="M5 4a1 1 0 00-2 0v7.268a2 2 0 000 3.464V16a1 1 0 102 0v-1.268a2 2 0 000-3.464V4zM11 4a1 1 0 10-2 0v1.268a2 2 0 000 3.464V16a1 1 0 102 0V8.732a2 2 0 000-3.464V4zM16 3a1 1 0 011 1v7.268a2 2 0 010 3.464V16a1 1 0 11-2 0v-1.268a2 2 0 010-3.464V4a1 1 0 011-1z" />
+        </svg>
+        Comparar
+      </button>
+    );
+
+    return buttons;
   };
 
   return (
@@ -75,11 +116,15 @@ const App: React.FC = () => {
           </div>
 
           <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl p-4 sm:p-6 transition-colors duration-300">
-             {Object.keys(LOTTERY_CONFIGS).map((key) => (
-              <div key={key} style={{ display: activeLottery === key ? 'block' : 'none' }}>
-                <LotteryAnalysis config={LOTTERY_CONFIGS[key as LotteryKey]} isDarkMode={isDarkMode} />
-              </div>
-            ))}
+             {activeLottery === 'comparison' ? (
+                 <LotteryComparison />
+             ) : (
+                Object.keys(LOTTERY_CONFIGS).map((key) => (
+                  <div key={key} style={{ display: activeLottery === key ? 'block' : 'none' }}>
+                    <LotteryAnalysis config={LOTTERY_CONFIGS[key as LotteryKey]} isDarkMode={isDarkMode} />
+                  </div>
+                ))
+             )}
           </div>
 
            <footer className="text-center mt-12 text-slate-600 dark:text-slate-500 text-sm">
